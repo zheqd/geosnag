@@ -1,0 +1,48 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# GeoSnag runtime
+.geosnag_index.json
+*.geosnag.bak
+config.yaml
+
+# Claude / AI working docs
+.claude/
+
+# Test artifacts
+test_report.csv
+config_test.yaml
+tests/testdata/
+
+# Samples (large binaries)
+samples/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Distribution / packaging
+*.whl
+*.tar.gz
+requirements.txt

@@ -1,0 +1,74 @@
+# GeoSnag Configuration
+# ======================
+# Adjust these settings for your Synology Photos folder structure.
+
+# Directories to scan for photos (all types — camera, mobile, mixed)
+# GeoSnag auto-detects which photos have GPS (sources) and which don't (targets).
+scan_dirs:
+  - /volume1/photo               # Root of Synology Photos personal space
+  # - /volume1/photo/MobileBackup
+  # - /volume1/photo/2022
+  # - /volume1/photo/2023
+
+# Scan subdirectories recursively
+recursive: true
+
+# File extensions to include (all photo types, both camera and mobile)
+extensions:
+  - .jpg
+  - .jpeg
+  - .arw    # Sony
+  - .nef    # Nikon
+  - .cr2    # Canon (older)
+  - .cr3    # Canon (newer)
+  - .dng    # Adobe DNG
+  - .orf    # Olympus
+  - .raf    # Fujifilm
+  - .rw2    # Panasonic
+  - .heic   # iPhone default
+  - .heif
+  - .png
+
+# Matching settings
+matching:
+  # Maximum time difference between target and source photo (in minutes)
+  max_time_delta_minutes: 120    # 2 hours
+
+  # Minimum confidence threshold to accept a match (0-100)
+  # 100 = exact timestamp match, 0 = at the edge of max_time_delta
+  min_confidence: 0
+
+# Write mode: how to store GPS data
+# Options:
+#   "exif"         — Write GPS directly into the photo EXIF (modifies file)
+#   "xmp_sidecar"  — Write a .xmp sidecar file next to the photo (non-destructive)
+#   "both"         — Write both EXIF and XMP sidecar
+write_mode: exif
+
+# Create .geosnag.bak backup before modifying files (only for exif mode)
+create_backup: true
+
+# Dry run: scan and match but don't write anything
+dry_run: true
+
+# Skip photos already processed by GeoSnag (checks EXIF UserComment tag)
+skip_processed: true
+
+# Performance: Scan index (caches EXIF data between runs)
+# First run scans all files. Subsequent runs only scan new/changed files.
+use_index: true
+
+# Performance: Parallel scanning threads
+# Higher = faster scans, but more CPU/IO usage. 1 = sequential.
+workers: 4
+
+# Logging
+log_level: INFO    # DEBUG, INFO, WARNING, ERROR
+log_file: null     # Set to a path to log to file, e.g. /volume1/photo/geosnag.log
+
+# Exclude patterns (glob-style, matched against relative path)
+exclude_patterns:
+  - "*/video/*"
+  - "*/@eaDir/*"          # Synology thumbnail cache
+  - "*/#recycle/*"         # Synology recycle bin
+  - "*.geosnag.bak"
