@@ -7,7 +7,7 @@ lint:
 	ruff format --check geosnag/ tests/
 
 test:
-	python -m pytest tests/test_index.py tests/test_special_paths.py -v
+	python -m pytest tests/test_index.py tests/test_special_paths.py tests/test_writer.py -v
 	python tests/test_e2e.py -v
 
 # Download and vendor ExifTool Perl files into geosnag/vendor/exiftool/.

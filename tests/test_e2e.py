@@ -16,9 +16,10 @@ from datetime import datetime, timedelta
 # Add parent to path for package imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import geosnag.writer as writer_module
 from geosnag.matcher import match_photos
 from geosnag.scanner import PhotoMeta, scan_directory, scan_photo
-from geosnag.writer import stamp_processed, write_gps_to_exif, write_gps_xmp_sidecar
+from geosnag.writer import _find_exiftool, stamp_processed, write_gps_to_exif, write_gps_xmp_sidecar
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 PASS = "✓"
@@ -410,6 +411,98 @@ def test_full_pipeline():
             check("Pipeline: re-run has 0 targets", stats2.targets == 0, f"targets={stats2.targets}")
 
 
+def test_writer_exiftool_backend():
+    """
+    E2E test for the ExifTool write backend.
+
+    Forces pyexiv2 off and routes writes through exiftool, verifying that
+    GPS and the processed stamp are correctly written to the NEF fixture.
+
+    Skipped automatically if no exiftool binary is available on this machine.
+    In CI (release.yml) exiftool is installed via apt-get so the test always runs.
+    """
+    print("\n── ExifTool Backend Tests ──")
+
+    nef_path = os.path.join(FIXTURES_DIR, "camera_no_gps.nef")
+    if not os.path.exists(nef_path):
+        print(f"  SKIP: NEF fixture not found at {nef_path}")
+        return
+
+    # Detect any available exiftool (vendored or system)
+    exiftool_cmd = _find_exiftool()
+    if exiftool_cmd is None:
+        print("  SKIP: exiftool not available (install via brew/opkg or run: make vendor)")
+        return
+
+    print(f"  Using: {' '.join(exiftool_cmd)}")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_nef = os.path.join(tmpdir, "test_exiftool.NEF")
+        shutil.copy2(nef_path, test_nef)
+
+        # Force exiftool backend by patching module-level globals
+        original_pyexiv2_ok = writer_module._PYEXIV2_OK
+        original_exiftool = writer_module._EXIFTOOL
+        try:
+            writer_module._PYEXIV2_OK = False
+            writer_module._EXIFTOOL = exiftool_cmd
+
+            # Oslo coordinates (59.9139°N, 10.7522°E)
+            result = write_gps_to_exif(
+                test_nef,
+                latitude=59.9139,
+                longitude=10.7522,
+                altitude=23.0,
+                stamp_after_write=True,
+            )
+        finally:
+            writer_module._PYEXIV2_OK = original_pyexiv2_ok
+            writer_module._EXIFTOOL = original_exiftool
+
+        check("ExifTool: write_gps_to_exif succeeds", result.success, result.error or "")
+
+        if not result.success:
+            return
+
+        meta = scan_photo(test_nef)
+        check("ExifTool: GPS present after write", meta.has_gps)
+
+        if meta.has_gps:
+            check(
+                "ExifTool: latitude correct",
+                abs(meta.gps_latitude - 59.9139) < 0.001,
+                f"{meta.gps_latitude:.6f}",
+            )
+            check(
+                "ExifTool: longitude correct",
+                abs(meta.gps_longitude - 10.7522) < 0.001,
+                f"{meta.gps_longitude:.6f}",
+            )
+
+        check("ExifTool: processed stamp set", meta.geosnag_processed)
+        check("ExifTool: original metadata preserved", meta.camera_make == "NIKON CORPORATION")
+        check(
+            "ExifTool: datetime preserved",
+            meta.datetime_original == datetime(2017, 9, 23, 23, 11, 37),
+        )
+
+        # Verify stamp_processed also routes correctly through exiftool
+        test_nef2 = os.path.join(tmpdir, "test_stamp.NEF")
+        shutil.copy2(nef_path, test_nef2)
+
+        try:
+            writer_module._PYEXIV2_OK = False
+            writer_module._EXIFTOOL = exiftool_cmd
+            stamp_ok = stamp_processed(test_nef2)
+        finally:
+            writer_module._PYEXIV2_OK = original_pyexiv2_ok
+            writer_module._EXIFTOOL = original_exiftool
+
+        check("ExifTool: stamp_processed succeeds", stamp_ok)
+        meta2 = scan_photo(test_nef2)
+        check("ExifTool: stamp detected on re-scan", meta2.geosnag_processed)
+
+
 if __name__ == "__main__":
     print("=" * 55)
     print("  GeoSnag End-to-End Tests (v0.1.1)")
@@ -420,6 +513,7 @@ if __name__ == "__main__":
     test_writer()
     test_processed_skip()
     test_full_pipeline()
+    test_writer_exiftool_backend()
 
     print()
     print("=" * 55)

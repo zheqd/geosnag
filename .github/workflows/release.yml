@@ -23,7 +23,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libexiv2-dev libgexiv2-dev
+          sudo apt-get install -y libexiv2-dev libgexiv2-dev libimage-exiftool-perl
 
       - name: Install Python dependencies
         run: |
@@ -33,7 +33,7 @@ jobs:
 
       - name: Run tests before release
         run: |
-          python -m pytest tests/test_index.py -v
+          python -m pytest tests/test_index.py tests/test_special_paths.py tests/test_writer.py -v
           python tests/test_e2e.py -v
 
       - name: Bundle ExifTool (vendored fallback for Synology)
