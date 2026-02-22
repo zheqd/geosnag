@@ -24,6 +24,26 @@ pip3 install --break-system-packages .
 
 If `pip3` is not available, try `python3 -m pip install ...` instead.
 
+### Install ExifTool (required on Synology)
+
+`pyexiv2` bundles a native library that requires glibc 2.32+, which is newer than what Synology DSM ships with. GeoSnag automatically falls back to **ExifTool** when pyexiv2 is unavailable.
+
+Install ExifTool via Entware:
+
+```bash
+opkg install perl-image-exiftool
+```
+
+If Entware is not set up, follow the [Entware install guide](https://github.com/Entware/Entware/wiki/Install-on-Synology-NAS) first.
+
+Verify ExifTool is available:
+
+```bash
+exiftool -ver
+```
+
+GeoSnag will detect it automatically at startup and log which backend it is using.
+
 ## Configure
 
 Create your config from the template and edit it:
