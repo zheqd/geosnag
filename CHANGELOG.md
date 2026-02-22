@@ -7,6 +7,16 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.2.3] — 2026-02-22
+
+### Fixed
+
+- **CI: install write backends** — `lint-and-test.yml` and `release.yml` now
+  install `libimage-exiftool-perl` and `pyexiv2` via `pip install ".[dev]"` so
+  `TestApply` tests pass on all Python versions.
+
+---
+
 ## [0.2.2] — 2026-02-22
 
 ### Fixed
