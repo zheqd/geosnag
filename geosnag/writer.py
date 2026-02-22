@@ -9,10 +9,8 @@ Backend selection
 -----------------
 1. pyexiv2  — preferred. Requires libexiv2 ≥ glibc 2.32. Works on modern
               Linux and macOS. May not be available on older Synology DSM.
-2. exiftool — fallback. Pure-Perl, no glibc dependency. Probed in order:
-              a) geosnag/vendor/exiftool/ (bundled, Perl required on PATH)
-              b) System exiftool / /opt/bin/exiftool / /usr/bin/exiftool
-              Handles all RAW formats (NEF, ARW, CR2, DNG, …) natively.
+2. exiftool — fallback. Probed at: exiftool, /opt/bin/exiftool, /usr/bin/exiftool.
+              Install on Synology via Entware: opkg install perl-image-exiftool
 
 Safety guarantee
 ----------------
@@ -29,7 +27,6 @@ import os
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import List, Optional
 
 from . import MARKER_PREFIX, PROJECT_NAME, PROJECT_TAG, __version__
@@ -70,28 +67,10 @@ def _probe_cmd(cmd: List[str]) -> bool:
 
 
 def _find_exiftool() -> Optional[List[str]]:
-    """
-    Return the exiftool invocation command as a list, or None if unavailable.
-
-    Probe order:
-    1. Vendored copy (geosnag/vendor/exiftool/exiftool) — bundled with the wheel.
-       Requires perl on PATH/standard locations.
-    2. System exiftool binary (exiftool, /opt/bin/exiftool, /usr/bin/exiftool).
-    """
-    # 1. Vendored copy (populated by: python scripts/download_exiftool.py)
-    vendor_script = Path(__file__).parent / "vendor" / "exiftool" / "exiftool"
-    if vendor_script.exists():
-        for perl in ("perl", "/usr/bin/perl", "/opt/bin/perl", "/usr/local/bin/perl"):
-            cmd = [perl, str(vendor_script)]
-            if _probe_cmd(cmd):
-                return cmd
-
-    # 2. System exiftool binary
+    """Return the exiftool invocation command, or None if not installed."""
     for candidate in ("exiftool", "/opt/bin/exiftool", "/usr/bin/exiftool"):
-        cmd = [candidate]
-        if _probe_cmd(cmd):
-            return cmd
-
+        if _probe_cmd([candidate]):
+            return [candidate]
     return None
 
 

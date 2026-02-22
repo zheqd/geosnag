@@ -4,7 +4,7 @@ Unit tests for geosnag/writer.py.
 Covers:
 - _probe_cmd: all subprocess failure modes
 - _has_pyexiv2: module missing, glibc OSError, other exception
-- _find_exiftool: probe order (vendored before system), each fallback path
+- _find_exiftool: system binary probe, each candidate path
 - _write_gps_exiftool: correct subprocess args for every combination
 - _stamp_exiftool: correct subprocess args, non-zero exit raises
 - write_gps_to_exif: routing to pyexiv2 / exiftool / neither
@@ -14,7 +14,6 @@ Covers:
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -29,32 +28,6 @@ from geosnag.writer import (
     stamp_processed,
     write_gps_to_exif,
 )
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def fake_vendor_script():
-    """
-    Temporarily create a placeholder exiftool script in the vendor directory.
-
-    This exercises the real vendor-script path detection without downloading
-    the full ExifTool distribution. Cleaned up after each test.
-    """
-    script_path = Path(writer_module.__file__).parent / "vendor" / "exiftool" / "exiftool"
-    already_existed = script_path.exists()
-
-    if not already_existed:
-        script_path.parent.mkdir(parents=True, exist_ok=True)
-        script_path.write_text("#!/usr/bin/perl\nprint '13.50\\n';\n")
-        script_path.chmod(0o755)
-
-    yield script_path
-
-    if not already_existed:
-        script_path.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -128,73 +101,40 @@ class TestHasPyexiv2:
 class TestFindExiftool:
     def test_returns_none_when_nothing_available(self):
         with patch("geosnag.writer._probe_cmd", return_value=False):
-            with patch.object(Path, "exists", return_value=False):
-                assert _find_exiftool() is None
+            assert _find_exiftool() is None
 
     def test_returns_system_binary_when_available(self):
         def probe(cmd):
             return cmd == ["exiftool"]
 
         with patch("geosnag.writer._probe_cmd", side_effect=probe):
-            with patch.object(Path, "exists", return_value=False):  # no vendor script
-                result = _find_exiftool()
-                assert result == ["exiftool"]
+            result = _find_exiftool()
+            assert result == ["exiftool"]
 
-    def test_vendored_probed_before_system(self, fake_vendor_script):
-        """Vendor script (perl + script path) is tried before system binary."""
+    def test_returns_opt_bin_when_system_missing(self):
+        def probe(cmd):
+            return cmd == ["/opt/bin/exiftool"]
+
+        with patch("geosnag.writer._probe_cmd", side_effect=probe):
+            result = _find_exiftool()
+            assert result == ["/opt/bin/exiftool"]
+
+    def test_system_binary_probed_before_opt_bin(self):
         probed = []
 
         def probe(cmd):
-            probed.append(tuple(cmd))
-            return False  # nothing succeeds, we just want to observe order
+            probed.append(cmd[0])
+            return False
 
         with patch("geosnag.writer._probe_cmd", side_effect=probe):
             _find_exiftool()
 
-        vendor_calls = [c for c in probed if len(c) == 2]  # ["perl", "/path/script"]
-        system_calls = [c for c in probed if len(c) == 1]  # ["exiftool"]
-
-        assert vendor_calls, "Should have tried perl + vendor script"
-        assert system_calls, "Should have tried system binary as fallback"
-
-        first_vendor_idx = next(i for i, c in enumerate(probed) if len(c) == 2)
-        first_system_idx = next(i for i, c in enumerate(probed) if len(c) == 1)
-        assert first_vendor_idx < first_system_idx, "Vendor must be probed before system"
-
-    def test_vendored_returns_perl_cmd(self, fake_vendor_script):
-        """When vendor script is found with perl, returns [perl, script_path]."""
-
-        def probe(cmd):
-            # Accept the first perl call (simulating perl found)
-            return len(cmd) == 2 and cmd[0] == "perl"
-
-        with patch("geosnag.writer._probe_cmd", side_effect=probe):
-            result = _find_exiftool()
-
-        assert result is not None
-        assert len(result) == 2
-        assert result[0] == "perl"
-        assert result[1] == str(fake_vendor_script)
-
-    def test_falls_back_to_system_when_no_perl(self, fake_vendor_script):
-        """If vendor script exists but no perl available, falls back to system."""
-
-        def probe(cmd):
-            # Reject all perl calls, accept system exiftool
-            if len(cmd) == 2:  # perl + script
-                return False
-            return cmd == ["exiftool"]
-
-        with patch("geosnag.writer._probe_cmd", side_effect=probe):
-            result = _find_exiftool()
-
-        assert result == ["exiftool"]
+        assert probed.index("exiftool") < probed.index("/opt/bin/exiftool")
 
     def test_return_type_is_list(self):
         with patch("geosnag.writer._probe_cmd", return_value=True):
-            with patch.object(Path, "exists", return_value=False):
-                result = _find_exiftool()
-                assert result is None or isinstance(result, list)
+            result = _find_exiftool()
+            assert result is None or isinstance(result, list)
 
 
 # ---------------------------------------------------------------------------
@@ -379,13 +319,12 @@ class TestWriteGpsToExifRouting:
                     assert "exiftool failed" in result.error
 
     def test_passes_exiftool_cmd_to_backend(self):
-        cmd = ["perl", "/vendor/exiftool"]
+        cmd = ["exiftool"]
         with patch.object(writer_module, "_PYEXIV2_OK", False):
             with patch.object(writer_module, "_EXIFTOOL", cmd):
                 with patch("geosnag.writer._write_gps_exiftool") as mock_et:
                     mock_et.return_value = None
                     write_gps_to_exif("/tmp/test.NEF", 1.0, 1.0)
-                    _, kwargs = mock_et.call_args
                     assert mock_et.call_args[0][-1] == cmd  # last positional = exiftool
 
 

@@ -1,6 +1,3 @@
-# Include vendored ExifTool Perl files in sdist
-recursive-include geosnag/vendor *
-
 # Exclude byte-compiled files
 global-exclude __pycache__
 global-exclude *.pyc
