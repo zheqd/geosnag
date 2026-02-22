@@ -66,7 +66,7 @@ GeoSnag was designed for Synology NAS environments:
 ## Quick Start
 
 ```bash
-pip install https://github.com/zheqd/geosnag/releases/latest/download/geosnag-0.1.1-py3-none-any.whl
+pip install geosnag
 
 curl -O https://raw.githubusercontent.com/zheqd/geosnag/main/config.example.yaml
 cp config.example.yaml config.yaml
@@ -74,6 +74,13 @@ nano config.yaml    # set your photo directories
 
 geosnag             # dry run — preview matches
 geosnag --apply     # write GPS data
+```
+
+If PyPI is not available (e.g. air-gapped Synology NAS), install the latest wheel directly from GitHub:
+
+```bash
+pip install "$(curl -s https://api.github.com/repos/zheqd/geosnag/releases/latest \
+  | grep browser_download_url | grep '\.whl' | cut -d'"' -f4)"
 ```
 
 See [INSTALL.md](INSTALL.md) for detailed Synology NAS setup instructions.

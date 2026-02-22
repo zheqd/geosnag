@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write   # required for PyPI trusted publishing
 
 jobs:
   release:
@@ -43,6 +44,12 @@ jobs:
         run: |
           pip install build
           python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No API token needed — uses OIDC trusted publishing.
+        # One-time setup: add this repo+workflow as a trusted publisher at
+        # https://pypi.org/manage/project/geosnag/settings/publishing/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
