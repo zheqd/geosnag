@@ -1,5 +1,5 @@
 # GeoSnag - Photo Geo-Tagging Tool for Synology NAS
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 # ── Centralized project identity ──
 # Change ONLY these constants to rename the entire project.
