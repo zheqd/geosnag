@@ -47,9 +47,7 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        # No API token needed — uses OIDC trusted publishing.
-        # One-time setup: add this repo+workflow as a trusted publisher at
-        # https://pypi.org/manage/project/geosnag/settings/publishing/
+        environment: pypi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
