@@ -415,7 +415,7 @@ def test_full_pipeline():
 
 if __name__ == "__main__":
     print("=" * 55)
-    print("  GeoSnag End-to-End Tests (v0.1.0)")
+    print("  GeoSnag End-to-End Tests (v0.1.1)")
     print("=" * 55)
 
     test_scanner()

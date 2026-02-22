@@ -66,7 +66,7 @@ GeoSnag was designed for Synology NAS environments:
 ## Quick Start
 
 ```bash
-pip install https://github.com/zheqd/geosnag/releases/latest/download/geosnag-0.1.0-py3-none-any.whl
+pip install https://github.com/zheqd/geosnag/releases/latest/download/geosnag-0.1.1-py3-none-any.whl
 
 curl -O https://raw.githubusercontent.com/zheqd/geosnag/main/config.example.yaml
 cp config.example.yaml config.yaml
