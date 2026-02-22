@@ -146,4 +146,27 @@ python3 tests/test_e2e.py
 python3 tests/test_index.py
 ```
 
-Expected: 61/61 E2E passed, 107/107 index passed.
+Expected: 61/61 E2E passed, 57/57 pytest passed.
+
+## Development (macOS)
+
+`pyexiv2` links against `libexiv2` which depends on `inih`. Install it via Homebrew before setting up the venv:
+
+```bash
+brew install inih
+```
+
+Then create a virtual environment and install with dev dependencies:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install '.[dev]'
+```
+
+Run tests:
+
+```bash
+python -m pytest tests/test_index.py tests/test_special_paths.py -v
+python tests/test_e2e.py -v
+```
