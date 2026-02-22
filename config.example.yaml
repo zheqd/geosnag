@@ -4,11 +4,17 @@
 
 # Directories to scan for photos (all types — camera, mobile, mixed)
 # GeoSnag auto-detects which photos have GPS (sources) and which don't (targets).
+#
+# Path quoting: always single-quote paths that contain spaces, !, or # characters.
+#   Safe:    - /volume1/photo/2023
+#   Quoted:  - '/volume1/photo/!PhotoLibrary/2016/08'
+#   Quoted:  - '/volume1/homes/user/photo library'
 scan_dirs:
-  - /volume1/photo               # Root of Synology Photos personal space
-  # - /volume1/photo/MobileBackup
-  # - /volume1/photo/2022
-  # - /volume1/photo/2023
+  - '/volume1/photo'             # Root of Synology Photos personal space
+  # - '/volume1/photo/MobileBackup'
+  # - '/volume1/photo/2022'
+  # - '/volume1/photo/2023'
+  # - '/volume1/homes/user/Photos/!PhotoLibrary/2016/08'
 
 # Scan subdirectories recursively
 recursive: true

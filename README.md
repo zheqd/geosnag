@@ -82,10 +82,14 @@ See [INSTALL.md](INSTALL.md) for detailed Synology NAS setup instructions.
 
 Copy `config.example.yaml` to `config.yaml` and edit it:
 
+Always **single-quote paths** in `scan_dirs`. Unquoted paths with `!` cause a YAML parse error, and paths with ` #` are silently truncated at the `#` (treated as a comment). Single quotes are safe for all characters.
+
 ```yaml
 scan_dirs:
-  - /volume1/photo/personal
-  - /volume1/photo/shared
+  - '/volume1/photo/personal'
+  - '/volume1/photo/shared'
+  - '/volume1/homes/user/Photos/!PhotoLibrary/2016/08'  # ← quotes required
+  - '/volume1/homes/user/photo library'                  # ← quotes required
 
 recursive: true
 
