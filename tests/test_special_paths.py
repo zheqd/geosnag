@@ -10,9 +10,7 @@ Covers:
 """
 
 import os
-import shutil
 import sys
-import tempfile
 
 import pytest
 import yaml
