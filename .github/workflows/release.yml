@@ -36,9 +36,6 @@ jobs:
           python -m pytest tests/test_index.py tests/test_special_paths.py tests/test_writer.py tests/test_e2e.py -v
           python tests/test_integration.py -v
 
-      - name: Bundle ExifTool (vendored fallback for Synology)
-        run: python scripts/download_exiftool.py
-
       - name: Build Python package
         run: |
           pip install build

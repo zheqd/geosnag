@@ -34,7 +34,7 @@ from .index import ScanIndex
 from .matcher import MatchStats, match_photos
 from .parallel import scan_with_index
 from .scanner import PHOTO_EXTS
-from .writer import write_gps_to_exif, write_gps_xmp_sidecar
+from .writer import _EXIFTOOL, _PYEXIV2_OK, write_gps_to_exif, write_gps_xmp_sidecar
 
 
 def _build_source_fingerprints(all_photos: list) -> dict:
@@ -466,6 +466,21 @@ Examples:
     logger = logging.getLogger(PROJECT_NAME.lower())
 
     print_banner()
+
+    # ── Backend validation ──
+    write_mode = config.get("write_mode", "exif")
+    is_dry_run = config["dry_run"]
+    if not is_dry_run and write_mode in ("exif", "both") and not _PYEXIV2_OK and not _EXIFTOOL:
+        print("  ✗  No EXIF write backend available.")
+        print()
+        print("     pyexiv2 could not be loaded (glibc version mismatch on older Synology DSM).")
+        print("     ExifTool was not found at: exiftool, /opt/bin/exiftool, /usr/bin/exiftool")
+        print()
+        print("     Install ExifTool via Entware:")
+        print("       opkg install perl-image-exiftool")
+        print()
+        print("     Then re-run geosnag --apply")
+        sys.exit(1)
 
     is_dry_run = config["dry_run"]
     if is_dry_run:
