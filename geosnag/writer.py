@@ -9,8 +9,9 @@ Backend selection
 -----------------
 1. pyexiv2  — preferred. Requires libexiv2 ≥ glibc 2.32. Works on modern
               Linux and macOS. May not be available on older Synology DSM.
-2. exiftool — fallback. Pure-Perl, no glibc dependency. Available on
-              Synology via Entware: `opkg install perl-image-exiftool`.
+2. exiftool — fallback. Pure-Perl, no glibc dependency. Probed in order:
+              a) geosnag/vendor/exiftool/ (bundled, Perl required on PATH)
+              b) System exiftool / /opt/bin/exiftool / /usr/bin/exiftool
               Handles all RAW formats (NEF, ARW, CR2, DNG, …) natively.
 
 Safety guarantee
@@ -28,7 +29,8 @@ import os
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
+from typing import List, Optional
 
 from . import MARKER_PREFIX, PROJECT_NAME, PROJECT_TAG, __version__
 
@@ -59,30 +61,48 @@ def _has_pyexiv2() -> bool:
         return False
 
 
-def _exiftool_path() -> Optional[str]:
-    """Return the path to exiftool if it is available, else None."""
+def _probe_cmd(cmd: List[str]) -> bool:
+    """Return True if running cmd + ['-ver'] exits 0."""
+    try:
+        return subprocess.run(cmd + ["-ver"], capture_output=True, timeout=5).returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _find_exiftool() -> Optional[List[str]]:
+    """
+    Return the exiftool invocation command as a list, or None if unavailable.
+
+    Probe order:
+    1. Vendored copy (geosnag/vendor/exiftool/exiftool) — bundled with the wheel.
+       Requires perl on PATH/standard locations.
+    2. System exiftool binary (exiftool, /opt/bin/exiftool, /usr/bin/exiftool).
+    """
+    # 1. Vendored copy (populated by: python scripts/download_exiftool.py)
+    vendor_script = Path(__file__).parent / "vendor" / "exiftool" / "exiftool"
+    if vendor_script.exists():
+        for perl in ("perl", "/usr/bin/perl", "/opt/bin/perl", "/usr/local/bin/perl"):
+            cmd = [perl, str(vendor_script)]
+            if _probe_cmd(cmd):
+                return cmd
+
+    # 2. System exiftool binary
     for candidate in ("exiftool", "/opt/bin/exiftool", "/usr/bin/exiftool"):
-        try:
-            result = subprocess.run(
-                [candidate, "-ver"],
-                capture_output=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                return candidate
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            continue
+        cmd = [candidate]
+        if _probe_cmd(cmd):
+            return cmd
+
     return None
 
 
 # Evaluate once at import time so every write call doesn't re-probe.
 _PYEXIV2_OK: bool = _has_pyexiv2()
-_EXIFTOOL: Optional[str] = None if _PYEXIV2_OK else _exiftool_path()
+_EXIFTOOL: Optional[List[str]] = None if _PYEXIV2_OK else _find_exiftool()
 
 if _PYEXIV2_OK:
     logger.debug("GPS writer: using pyexiv2")
 elif _EXIFTOOL:
-    logger.debug(f"GPS writer: pyexiv2 unavailable, using exiftool ({_EXIFTOOL})")
+    logger.debug(f"GPS writer: pyexiv2 unavailable, using exiftool ({' '.join(_EXIFTOOL)})")
 else:
     logger.warning(
         "GPS writer: neither pyexiv2 nor exiftool is available. "
@@ -180,14 +200,14 @@ def _write_gps_exiftool(
     longitude: float,
     altitude: Optional[float],
     stamp: Optional[str],
-    exiftool: str,
+    exiftool: List[str],
 ) -> None:
     """Write GPS (and optional stamp) via exiftool subprocess. Raises on failure."""
     lat_ref = "N" if latitude >= 0 else "S"
     lon_ref = "E" if longitude >= 0 else "W"
 
     args = [
-        exiftool,
+        *exiftool,
         "-overwrite_original",
         f"-GPSLatitude={abs(latitude)}",
         f"-GPSLatitudeRef={lat_ref}",
@@ -212,10 +232,10 @@ def _write_gps_exiftool(
         raise RuntimeError(result.stderr.strip() or "exiftool returned non-zero exit code")
 
 
-def _stamp_exiftool(filepath: str, stamp: str, exiftool: str) -> None:
+def _stamp_exiftool(filepath: str, stamp: str, exiftool: List[str]) -> None:
     """Write stamp tag only via exiftool. Raises on failure."""
     result = subprocess.run(
-        [exiftool, "-overwrite_original", f"-UserComment={stamp}", filepath],
+        [*exiftool, "-overwrite_original", f"-UserComment={stamp}", filepath],
         capture_output=True,
         text=True,
         timeout=30,

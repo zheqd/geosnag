@@ -46,3 +46,8 @@ env/
 *.whl
 *.tar.gz
 requirements.txt
+
+# Vendored ExifTool (populated by: python scripts/download_exiftool.py)
+# Tracked by git once committed; gitkeep preserves empty dir before first run
+geosnag/vendor/exiftool/lib/
+geosnag/vendor/exiftool/exiftool

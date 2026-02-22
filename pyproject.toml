@@ -47,6 +47,15 @@ geosnag = "geosnag.cli:main"
 [tool.setuptools.packages.find]
 include = ["geosnag*"]
 
+[tool.setuptools.package-data]
+# Include vendored ExifTool Perl files (populated by: python scripts/download_exiftool.py)
+"geosnag" = [
+    "vendor/exiftool/exiftool",
+    "vendor/exiftool/lib/Image/ExifTool.pm",
+    "vendor/exiftool/lib/Image/ExifTool/*.pm",
+    "vendor/exiftool/lib/Image/ExifTool/**/*.pm",
+]
+
 [tool.ruff]
 target-version = "py39"
 line-length = 120
