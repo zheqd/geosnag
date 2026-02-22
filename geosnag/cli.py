@@ -346,6 +346,7 @@ def apply_matches(
                 lon,
                 alt,
                 stamp_after_write=True,
+                format_mismatch=m.target.format_mismatch,
             )
             results.append(result)
 

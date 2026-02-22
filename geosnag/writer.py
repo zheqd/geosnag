@@ -24,6 +24,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
@@ -76,10 +77,13 @@ def _find_exiftool() -> Optional[List[str]]:
 
 # Evaluate once at import time so every write call doesn't re-probe.
 _PYEXIV2_OK: bool = _has_pyexiv2()
-_EXIFTOOL: Optional[List[str]] = None if _PYEXIV2_OK else _find_exiftool()
+# Always probe ExifTool — even when pyexiv2 is primary, ExifTool is needed
+# as fallback for format-mismatched files (e.g. Google Takeout JPEGs with .heic
+# extension) where pyexiv2/libexiv2 refuses to write but ExifTool -m succeeds.
+_EXIFTOOL: Optional[List[str]] = _find_exiftool()
 
 if _PYEXIV2_OK:
-    logger.debug("GPS writer: using pyexiv2")
+    logger.debug("GPS writer: using pyexiv2" + (" (exiftool available as fallback)" if _EXIFTOOL else ""))
 elif _EXIFTOOL:
     logger.debug(f"GPS writer: pyexiv2 unavailable, using exiftool ({' '.join(_EXIFTOOL)})")
 else:
@@ -102,6 +106,8 @@ class WriteResult:
     success: bool
     method: str  # "exif" or "xmp_sidecar"
     error: Optional[str] = None
+
+
 
 
 def _decimal_to_dms_rational(decimal: float) -> str:
@@ -161,6 +167,71 @@ def _write_gps_pyexiv2(
         img.close()
 
 
+def _write_gps_pyexiv2_imagedata(
+    filepath: str,
+    latitude: float,
+    longitude: float,
+    altitude: Optional[float],
+    stamp: Optional[str],
+) -> None:
+    """Write GPS via pyexiv2 ImageData (bytes-based, format-agnostic).
+
+    Used for format-mismatched files (e.g. Google Takeout JPEG saved as .heic)
+    where the normal pyexiv2.Image(filepath) path fails because libexiv2 checks
+    the file extension. ImageData works on raw bytes, detecting format from
+    magic bytes instead.
+
+    Uses temp-file + atomic rename to match libexiv2's own safety strategy.
+    Raises on failure.
+    """
+    import pyexiv2
+
+    lat_ref = "N" if latitude >= 0 else "S"
+    lon_ref = "E" if longitude >= 0 else "W"
+
+    gps_data = {
+        "Exif.GPSInfo.GPSVersionID": "2 3 0 0",
+        "Exif.GPSInfo.GPSLatitudeRef": lat_ref,
+        "Exif.GPSInfo.GPSLatitude": _decimal_to_dms_rational(latitude),
+        "Exif.GPSInfo.GPSLongitudeRef": lon_ref,
+        "Exif.GPSInfo.GPSLongitude": _decimal_to_dms_rational(longitude),
+        "Exif.GPSInfo.GPSMapDatum": "WGS-84",
+    }
+
+    if altitude is not None:
+        alt_ref = "0" if altitude >= 0 else "1"
+        gps_data["Exif.GPSInfo.GPSAltitudeRef"] = alt_ref
+        gps_data["Exif.GPSInfo.GPSAltitude"] = f"{int(abs(altitude) * 100)}/100"
+
+    if stamp:
+        gps_data[GEOSNAG_TAG] = stamp
+
+    # Read file into memory — ImageData detects format from content, not extension
+    with open(filepath, "rb") as f:
+        raw = f.read()
+
+    with pyexiv2.ImageData(raw) as img:
+        img.modify_exif(gps_data)
+        modified = img.get_bytes()
+
+    # Atomic write: temp file + rename (same strategy as libexiv2 internals)
+    tmp_path = filepath + ".geosnag_tmp"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(modified)
+        # Preserve original file permissions
+        st = os.stat(filepath)
+        os.chmod(tmp_path, st.st_mode)
+        os.replace(tmp_path, filepath)  # atomic on POSIX
+    except BaseException:
+        # Clean up temp file on any failure (including KeyboardInterrupt)
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def _stamp_pyexiv2(filepath: str, stamp: str) -> None:
     """Write stamp tag only via pyexiv2. Raises on failure."""
     import pyexiv2
@@ -184,14 +255,24 @@ def _write_gps_exiftool(
     altitude: Optional[float],
     stamp: Optional[str],
     exiftool: List[str],
+    lenient: bool = False,
 ) -> None:
-    """Write GPS (and optional stamp) via exiftool subprocess. Raises on failure."""
+    """Write GPS (and optional stamp) via exiftool subprocess. Raises on failure.
+
+    Args:
+        lenient: If True, pass -m flag to ignore minor errors like
+                 extension/content format mismatches (Google Takeout files).
+    """
     lat_ref = "N" if latitude >= 0 else "S"
     lon_ref = "E" if longitude >= 0 else "W"
 
     args = [
         *exiftool,
         "-overwrite_original",
+    ]
+    if lenient:
+        args.append("-m")
+    args += [
         f"-GPSLatitude={abs(latitude)}",
         f"-GPSLatitudeRef={lat_ref}",
         f"-GPSLongitude={abs(longitude)}",
@@ -214,6 +295,51 @@ def _write_gps_exiftool(
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()[:500]
         raise RuntimeError(stderr or "exiftool returned non-zero exit code")
+
+
+# Map format names (from scanner._detect_format_mismatch) → canonical extensions
+_FORMAT_EXT = {"JPEG": ".jpg", "PNG": ".png", "HEIC": ".heic"}
+
+
+def _write_gps_exiftool_rename(
+    filepath: str,
+    latitude: float,
+    longitude: float,
+    altitude: Optional[float],
+    stamp: Optional[str],
+    exiftool: List[str],
+    real_format: str,
+) -> None:
+    """Write GPS via ExifTool by temporarily renaming to the correct extension.
+
+    ExifTool's "Not a valid HEIC (looks more like a JPEG)" is a hard error
+    that ``-m`` does not suppress. The workaround: copy the file to a temp
+    path whose extension matches the real content, run ExifTool on the copy
+    (which now passes validation), then atomic-replace the original.
+
+    Raises on failure. Cleans up temp files even on crash.
+    """
+    correct_ext = _FORMAT_EXT.get(real_format)
+    if not correct_ext:
+        raise RuntimeError(f"Unknown format {real_format!r}, cannot determine extension")
+
+    dir_name = os.path.dirname(filepath)
+    base_name = os.path.basename(filepath)
+    tmp_path = os.path.join(dir_name, f".geosnag_tmp_{base_name}{correct_ext}")
+
+    try:
+        shutil.copy2(filepath, tmp_path)
+        _write_gps_exiftool(tmp_path, latitude, longitude, altitude, stamp, exiftool)
+        # Preserve original file permissions
+        st = os.stat(filepath)
+        os.chmod(tmp_path, st.st_mode)
+        os.replace(tmp_path, filepath)  # atomic on POSIX
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _stamp_exiftool(filepath: str, stamp: str, exiftool: List[str]) -> None:
@@ -262,6 +388,7 @@ def write_gps_to_exif(
     longitude: float,
     altitude: Optional[float] = None,
     stamp_after_write: bool = True,
+    format_mismatch: Optional[str] = None,
 ) -> WriteResult:
     """
     Write GPS coordinates into a photo's EXIF data.
@@ -276,6 +403,9 @@ def write_gps_to_exif(
         longitude: GPS longitude in decimal degrees (positive=E, negative=W)
         altitude: Optional GPS altitude in meters (positive=above sea level)
         stamp_after_write: If True, write GeoSnag processed tag after GPS
+        format_mismatch: If set (e.g. "JPEG"), the file's extension doesn't
+            match its real content — use ExifTool -m (lenient) mode.
+            Detected during scan, passed through to avoid re-reading the file.
 
     Returns:
         WriteResult with success/failure info
@@ -297,6 +427,54 @@ def write_gps_to_exif(
         )
 
     stamp = _make_stamp() if stamp_after_write else None
+
+    # Format-mismatched files (e.g. Google Takeout JPEG saved as .heic):
+    # The normal pyexiv2.Image(path) and ExifTool both reject these because
+    # the extension doesn't match the content. Fallback strategies:
+    #   1. pyexiv2.ImageData — reads raw bytes, detects format from content
+    #   2. ExifTool temp-rename — copy to temp with correct ext, write, replace
+    # Note: ExifTool -m does NOT suppress this error ("Not a valid HEIC …"
+    # is a hard error, not a minor warning), so we use the rename strategy.
+    if format_mismatch:
+        basename = os.path.basename(filepath)
+        # Strategy 1: pyexiv2 ImageData (atomic temp-file + rename)
+        if _PYEXIV2_OK:
+            logger.info(f"Format mismatch: {basename} is actually {format_mismatch}, using pyexiv2 ImageData")
+            try:
+                _write_gps_pyexiv2_imagedata(filepath, latitude, longitude, altitude, stamp)
+                logger.debug(f"GPS written (ImageData): {filepath}")
+                return WriteResult(filepath=filepath, success=True, method="exif")
+            except Exception as e:
+                logger.debug(f"ImageData write failed for {filepath}: {e}, trying ExifTool rename")
+                # Fall through to ExifTool rename
+
+        # Strategy 2: ExifTool with temp-rename to correct extension
+        if _EXIFTOOL:
+            logger.info(
+                f"Format mismatch: {basename} is actually {format_mismatch}, "
+                f"using ExifTool with temp rename to {_FORMAT_EXT.get(format_mismatch, '?')}"
+            )
+            try:
+                _write_gps_exiftool_rename(
+                    filepath, latitude, longitude, altitude, stamp, _EXIFTOOL, format_mismatch
+                )
+                logger.debug(f"GPS written (rename): {filepath}")
+                return WriteResult(filepath=filepath, success=True, method="exif")
+            except Exception as e:
+                logger.error(f"GPS write failed for {filepath}: {e}")
+                return WriteResult(filepath=filepath, success=False, method="exif", error=str(e))
+
+        # Neither backend can handle it
+        logger.warning(
+            f"Format mismatch: {basename} is actually {format_mismatch}, "
+            f"but neither pyexiv2 nor ExifTool is available"
+        )
+        return WriteResult(
+            filepath=filepath,
+            success=False,
+            method="exif",
+            error=f"Format mismatch ({format_mismatch}) — no write backend available",
+        )
 
     try:
         if _PYEXIV2_OK:

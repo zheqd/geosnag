@@ -88,6 +88,7 @@ class PhotoMeta:
     camera_model: Optional[str] = None
     geosnag_processed: bool = False  # True if already processed by GeoSnag
     scan_error: Optional[str] = None
+    format_mismatch: Optional[str] = None  # Real format if ext doesn't match content (e.g. "JPEG")
 
     @property
     def date_key(self) -> Optional[str]:
@@ -309,6 +310,39 @@ def _scan_heic(filepath: str) -> dict:
     return result
 
 
+def _detect_format_mismatch(filepath: str, ext: str) -> Optional[str]:
+    """Check if file content doesn't match its extension by sniffing magic bytes.
+
+    Returns the real format string (e.g. "JPEG") if mismatched, None if OK.
+    Common with Google Takeout exports that save JPEGs as .heic.
+    """
+    _EXT_FORMAT = {
+        ".jpg": "JPEG", ".jpeg": "JPEG",
+        ".png": "PNG",
+        ".heic": "HEIC", ".heif": "HEIC",
+    }
+    expected = _EXT_FORMAT.get(ext)
+    if expected is None:
+        return None  # RAW formats — no magic-byte check
+
+    try:
+        with open(filepath, "rb") as f:
+            header = f.read(12)
+    except OSError:
+        return None
+
+    if header[:3] == b"\xff\xd8\xff":
+        real = "JPEG"
+    elif header[:4] == b"\x89PNG":
+        real = "PNG"
+    elif header[4:8] == b"ftyp":
+        real = "HEIC"
+    else:
+        return None
+
+    return real if real != expected else None
+
+
 def scan_photo(filepath: str) -> PhotoMeta:
     """Scan a single photo file and return its metadata."""
     filename = os.path.basename(filepath)
@@ -319,6 +353,9 @@ def scan_photo(filepath: str) -> PhotoMeta:
         filename=filename,
         extension=ext,
     )
+
+    # Detect extension/content mismatch (e.g. Google Takeout JPEG saved as .heic)
+    meta.format_mismatch = _detect_format_mismatch(filepath, ext)
 
     try:
         if ext in {".heic", ".heif"}:
