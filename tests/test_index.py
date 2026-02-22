@@ -993,7 +993,9 @@ def test_match_cache_index_clear():
 
 if __name__ == "__main__":
     print("=" * 55)
-    print("  GeoSnag Index & Parallel Tests (v0.3.0)")
+    from geosnag import __version__
+
+    print(f"  GeoSnag Index & Parallel Tests (v{__version__})")
     print("=" * 55)
 
     # ScanIndex unit tests

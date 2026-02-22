@@ -16,7 +16,6 @@ Thread safety:
 
 from __future__ import annotations
 
-import fnmatch
 import logging
 import os
 import threading
@@ -26,7 +25,7 @@ from typing import Optional
 
 from . import PROJECT_NAME
 from .index import ScanIndex
-from .scanner import PHOTO_EXTS, PhotoMeta, scan_photo
+from .scanner import PHOTO_EXTS, PhotoMeta, collect_photo_paths, scan_photo
 
 logger = logging.getLogger(f"{PROJECT_NAME.lower()}.parallel")
 
@@ -37,37 +36,12 @@ def _collect_file_paths(
     recursive: bool = True,
     exclude_patterns: list = None,
 ) -> list:
-    """Walk directories and collect all photo file paths (no EXIF reading)."""
-    paths = []
-    for directory in directories:
-        if not os.path.isdir(directory):
-            logger.warning(f"Directory not found, skipping: {directory}")
-            continue
+    """Walk directories and collect all photo file paths (no EXIF reading).
 
-        walker = os.walk(directory) if recursive else [(directory, [], os.listdir(directory))]
-        for root, dirs, files in walker:
-            if not recursive:
-                files = [f for f in files if os.path.isfile(os.path.join(root, f))]
-            for fname in sorted(files):
-                ext = os.path.splitext(fname)[1].lower()
-                if ext not in extensions:
-                    continue
-
-                filepath = os.path.join(root, fname)
-
-                if exclude_patterns:
-                    rel_path = os.path.relpath(filepath, directory)
-                    excluded = False
-                    for pattern in exclude_patterns:
-                        if fnmatch.fnmatch(rel_path, pattern) or fnmatch.fnmatch(filepath, pattern):
-                            excluded = True
-                            break
-                    if excluded:
-                        continue
-
-                paths.append(filepath)
-
-    return paths
+    Delegates to scanner.collect_photo_paths — kept as a thin wrapper for
+    backward compatibility with tests that import this name.
+    """
+    return collect_photo_paths(directories, extensions, recursive, exclude_patterns)
 
 
 class ScanProgress:

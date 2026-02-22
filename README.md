@@ -124,7 +124,6 @@ matching:
   min_confidence: 0             # 0–100, reject matches below this
 
 write_mode: exif          # exif | xmp_sidecar | both
-create_backup: true
 skip_processed: true
 dry_run: true             # always start with dry run
 workers: 4                # parallel scan threads

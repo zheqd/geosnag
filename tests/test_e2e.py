@@ -26,6 +26,8 @@ import yaml
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 NEF = FIXTURES_DIR / "camera_no_gps.nef"
 JPG = FIXTURES_DIR / "phone_with_gps.jpg"
+HEIC_GPS = FIXTURES_DIR / "phone_with_gps.heic"
+HEIC_NO_GPS = FIXTURES_DIR / "phone_no_gps.heic"
 
 # Invoke via python -m geosnag.cli so tests work without the package installed
 # into the active environment's PATH.
@@ -326,3 +328,81 @@ class TestNoMatch:
         r = run("--config", str(p))
         assert r.returncode == 0
         assert "No matches" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# HEIC fixture tests
+# ---------------------------------------------------------------------------
+
+
+class TestHeicScanning:
+    """Tests for HEIC/HEIF file scanning and matching."""
+
+    def test_heic_with_gps_detected_as_source(self, tmp_path):
+        """HEIC with GPS metadata is classified as a GPS source."""
+        shutil.copy2(HEIC_GPS, tmp_path / "iphone.heic")
+        cfg = {
+            "scan_dirs": [str(tmp_path)],
+            "dry_run": True,
+            "use_index": False,
+            "workers": 1,
+        }
+        p = tmp_path / "config.yaml"
+        p.write_text(yaml.dump(cfg))
+
+        r = run("--config", str(p))
+        assert r.returncode == 0
+        assert "GPS sources" in r.stdout
+
+    def test_heic_without_gps_detected_as_target(self, tmp_path):
+        """HEIC without GPS metadata is classified as a GPS target."""
+        shutil.copy2(HEIC_NO_GPS, tmp_path / "target.heic")
+        cfg = {
+            "scan_dirs": [str(tmp_path)],
+            "dry_run": True,
+            "use_index": False,
+            "workers": 1,
+        }
+        p = tmp_path / "config.yaml"
+        p.write_text(yaml.dump(cfg))
+
+        r = run("--config", str(p))
+        assert r.returncode == 0
+        assert "Eligible targets:        1" in r.stdout
+
+    def test_heic_source_matches_heic_target(self, tmp_path):
+        """HEIC GPS source matches HEIC target on same day within time delta."""
+        shutil.copy2(HEIC_GPS, tmp_path / "source.heic")
+        shutil.copy2(HEIC_NO_GPS, tmp_path / "target.heic")
+        cfg = {
+            "scan_dirs": [str(tmp_path)],
+            "dry_run": True,
+            "use_index": False,
+            "workers": 1,
+        }
+        p = tmp_path / "config.yaml"
+        p.write_text(yaml.dump(cfg))
+
+        r = run("--config", str(p))
+        assert r.returncode == 0
+        assert "target.heic" in r.stdout
+
+    def test_heic_source_and_nef_target_both_scanned(self, tmp_path):
+        """HEIC GPS source and NEF target are both detected when scanned together."""
+        shutil.copy2(HEIC_GPS, tmp_path / "iphone.heic")
+        shutil.copy2(NEF, tmp_path / "camera.NEF")
+        cfg = {
+            "scan_dirs": [str(tmp_path)],
+            "dry_run": True,
+            "use_index": False,
+            "workers": 1,
+        }
+        p = tmp_path / "config.yaml"
+        p.write_text(yaml.dump(cfg))
+
+        r = run("--config", str(p))
+        assert r.returncode == 0
+        # HEIC has GPS → counted as source; NEF has no GPS → counted as target.
+        # Dates differ (2025-06-15 vs 2017-09-23) so no match is expected.
+        assert "GPS sources" in r.stdout
+        assert "Eligible targets:        1" in r.stdout

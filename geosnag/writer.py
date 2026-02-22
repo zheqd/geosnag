@@ -115,7 +115,7 @@ def _decimal_to_dms_rational(decimal: float) -> str:
 
 def _make_stamp() -> str:
     """Generate the processed marker string."""
-    now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     return f"{MARKER_PREFIX}v{__version__}:{now}"
 
 
@@ -210,9 +210,10 @@ def _write_gps_exiftool(
 
     args.append(filepath)
 
-    result = subprocess.run(args, capture_output=True, text=True, timeout=30, encoding="utf-8")
+    result = subprocess.run(args, capture_output=True, timeout=30, encoding="utf-8")
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "exiftool returned non-zero exit code")
+        stderr = (result.stderr or "").strip()[:500]
+        raise RuntimeError(stderr or "exiftool returned non-zero exit code")
 
 
 def _stamp_exiftool(filepath: str, stamp: str, exiftool: List[str]) -> None:
@@ -220,11 +221,12 @@ def _stamp_exiftool(filepath: str, stamp: str, exiftool: List[str]) -> None:
     result = subprocess.run(
         [*exiftool, "-overwrite_original", f"-Software={stamp}", filepath],
         capture_output=True,
-        text=True,
         timeout=30,
+        encoding="utf-8",
     )
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "exiftool stamp failed")
+        stderr = (result.stderr or "").strip()[:500]
+        raise RuntimeError(stderr or "exiftool stamp failed")
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +304,7 @@ def write_gps_to_exif(
         else:
             _write_gps_exiftool(filepath, latitude, longitude, altitude, stamp, _EXIFTOOL)
 
-        logger.debug(f"GPS written: {filepath} → ({latitude:.6f}, {longitude:.6f})")
+        logger.debug(f"GPS written: {filepath}")
         return WriteResult(filepath=filepath, success=True, method="exif")
 
     except Exception as e:

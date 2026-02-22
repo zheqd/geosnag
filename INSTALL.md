@@ -78,7 +78,6 @@ matching:
   min_confidence: 0
 
 write_mode: exif
-create_backup: true
 skip_processed: true
 dry_run: true
 log_level: INFO

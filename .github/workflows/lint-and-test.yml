@@ -52,8 +52,7 @@ jobs:
           pip install .
           pip install pytest
 
-      - name: Run unit tests (index)
-        run: python -m pytest tests/test_index.py -v
-
-      - name: Run E2E tests
-        run: python tests/test_e2e.py -v
+      - name: Run tests
+        run: |
+          python -m pytest tests/test_index.py tests/test_special_paths.py tests/test_writer.py tests/test_e2e.py -v
+          python tests/test_integration.py -v
