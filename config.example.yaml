@@ -51,9 +51,6 @@ matching:
 #   "both"         — Write both EXIF and XMP sidecar
 write_mode: exif
 
-# Create .geosnag.bak backup before modifying files (only for exif mode)
-create_backup: true
-
 # Dry run: scan and match but don't write anything
 dry_run: true
 
@@ -76,5 +73,4 @@ log_file: null     # Set to a path to log to file, e.g. /volume1/photo/geosnag.l
 exclude_patterns:
   - "*/video/*"
   - "*/@eaDir/*"          # Synology thumbnail cache
-  - "*/#recycle/*"         # Synology recycle bin
-  - "*.geosnag.bak"
+  - "*/#recycle/*"        # Synology recycle bin

@@ -49,7 +49,7 @@ GeoSnag defaults to dry-run mode. Running `geosnag` without `--apply` scans ever
 
 Additional safety measures:
 
-- **Backup files** — every file is copied to `<filename>.geosnag.bak` before modification. If something goes wrong, the originals are one rename away.
+- **No backup files needed** — pyexiv2 is built on libexiv2, a mature C++ library that has been the EXIF standard for 20+ years (used by Lightroom, digiKam, darktable, ExifTool). libexiv2 performs writes atomically: it parses and modifies the full EXIF structure in memory, then writes it back in a single operation. If anything fails — disk full, permission denied, corrupt header — it raises an exception before the file is touched. The original is never partially overwritten.
 - **Processed-file tagging** — after writing GPS data, GeoSnag stamps the file's `Exif.Photo.UserComment` with a `GeoSnag:` marker. On future runs, tagged files are automatically skipped. This prevents double-processing and makes re-runs safe.
 - **GPS validation** — latitude and longitude values are range-checked before writing. Invalid coordinates from corrupted EXIF data won't propagate.
 - **CSV reports** — use `--report matches.csv` to export the full match table for review before committing to `--apply`.

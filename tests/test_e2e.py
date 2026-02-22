@@ -223,11 +223,9 @@ def test_writer():
             latitude=55.7539,
             longitude=37.6208,
             altitude=150.5,
-            create_backup=True,
             stamp_after_write=True,
         )
         check("Write EXIF: success", result.success, result.error or "")
-        check("Write EXIF: backup created", result.backup_path and os.path.exists(result.backup_path))
 
         # Verify GPS was written
         meta_after = scan_photo(test_nef)
@@ -376,7 +374,6 @@ def test_full_pipeline():
                 m.target.filepath,
                 m.source.gps_latitude,
                 m.source.gps_longitude,
-                create_backup=True,
                 stamp_after_write=True,
             )
             check("Pipeline: GPS write success", result.success, result.error or "")

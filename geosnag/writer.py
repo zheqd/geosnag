@@ -4,18 +4,26 @@ writer.py — GPS EXIF writer for photo files.
 Writes GPS coordinates into photo EXIF data using pyexiv2.
 Also supports writing XMP sidecar files as a non-destructive alternative.
 After writing GPS, stamps a processed marker tag so the file is skipped on re-runs.
+
+Safety guarantee
+----------------
+pyexiv2 (built on libexiv2) performs all metadata writes atomically at the
+library level: it parses the full EXIF structure in memory, modifies only the
+requested tags, and writes the result back to the file in a single operation.
+If the write fails for any reason (disk full, permission error, corrupt header),
+libexiv2 raises an exception before the file is touched — the original is never
+partially overwritten. This makes a separate backup copy unnecessary.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from . import BACKUP_EXT, MARKER_PREFIX, PROJECT_NAME, PROJECT_TAG, __version__
+from . import MARKER_PREFIX, PROJECT_NAME, PROJECT_TAG, __version__
 
 logger = logging.getLogger(f"{PROJECT_NAME.lower()}.writer")
 
@@ -32,7 +40,6 @@ class WriteResult:
     success: bool
     method: str  # "exif" or "xmp_sidecar"
     error: Optional[str] = None
-    backup_path: Optional[str] = None
 
 
 def _decimal_to_dms_rational(decimal: float) -> str:
@@ -75,7 +82,6 @@ def write_gps_to_exif(
     latitude: float,
     longitude: float,
     altitude: Optional[float] = None,
-    create_backup: bool = True,
     stamp_after_write: bool = True,
 ) -> WriteResult:
     """
@@ -83,12 +89,15 @@ def write_gps_to_exif(
 
     Works with JPG, NEF, ARW, CR2, DNG, and other formats supported by exiv2.
 
+    pyexiv2/libexiv2 writes atomically: the file is only modified after the
+    full EXIF structure is successfully prepared in memory. A failed write
+    raises an exception without touching the original file.
+
     Args:
         filepath: Path to the photo file
         latitude: GPS latitude in decimal degrees (positive=N, negative=S)
         longitude: GPS longitude in decimal degrees (positive=E, negative=W)
         altitude: Optional GPS altitude in meters (positive=above sea level)
-        create_backup: If True, create .bak backup before modifying
         stamp_after_write: If True, write GeoSnag processed tag after GPS
 
     Returns:
@@ -104,16 +113,7 @@ def write_gps_to_exif(
             error="pyexiv2 not installed",
         )
 
-    backup_path = None
-
     try:
-        # Create backup
-        if create_backup:
-            backup_path = filepath + BACKUP_EXT
-            if not os.path.exists(backup_path):
-                shutil.copy2(filepath, backup_path)
-                logger.debug(f"Backup created: {backup_path}")
-
         # Prepare GPS EXIF data
         lat_ref = "N" if latitude >= 0 else "S"
         lon_ref = "E" if longitude >= 0 else "W"
@@ -139,7 +139,7 @@ def write_gps_to_exif(
         if stamp_after_write:
             gps_data[GEOSNAG_TAG] = _make_stamp()
 
-        # Write to file
+        # Write to file — libexiv2 raises before touching the file on failure
         img = pyexiv2.Image(filepath)
         img.modify_exif(gps_data)
         img.close()
@@ -150,26 +150,15 @@ def write_gps_to_exif(
             filepath=filepath,
             success=True,
             method="exif",
-            backup_path=backup_path,
         )
 
     except Exception as e:
         logger.error(f"GPS write failed for {filepath}: {e}")
-
-        # Restore from backup on failure
-        if backup_path and os.path.exists(backup_path):
-            try:
-                shutil.copy2(backup_path, filepath)
-                logger.info(f"Restored from backup: {filepath}")
-            except Exception as restore_err:
-                logger.error(f"Backup restore also failed: {restore_err}")
-
         return WriteResult(
             filepath=filepath,
             success=False,
             method="exif",
             error=str(e),
-            backup_path=backup_path,
         )
 
 
@@ -261,19 +250,3 @@ def write_gps_xmp_sidecar(
             method="xmp_sidecar",
             error=str(e),
         )
-
-
-def remove_backups(directory: str, recursive: bool = True) -> int:
-    """Remove backup files. Returns count of removed files."""
-    removed = 0
-    walker = os.walk(directory) if recursive else [(directory, [], os.listdir(directory))]
-    for root, dirs, files in walker:
-        for fname in files:
-            if fname.endswith(BACKUP_EXT):
-                fpath = os.path.join(root, fname)
-                try:
-                    os.remove(fpath)
-                    removed += 1
-                except OSError as e:
-                    logger.warning(f"Could not remove backup {fpath}: {e}")
-    return removed

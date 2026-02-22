@@ -28,7 +28,7 @@ from datetime import timedelta
 
 import yaml
 
-from . import BACKUP_EXT, INDEX_FILENAME, PROJECT_NAME
+from . import INDEX_FILENAME, PROJECT_NAME
 from . import __version__ as VERSION
 from .index import ScanIndex
 from .matcher import MatchStats, match_photos
@@ -76,7 +76,6 @@ def load_config(config_path: str) -> dict:
     # Defaults
     config.setdefault("recursive", True)
     config.setdefault("write_mode", "exif")
-    config.setdefault("create_backup", True)
     config.setdefault("dry_run", True)
     config.setdefault("skip_processed", True)
     config.setdefault("log_level", "INFO")
@@ -285,7 +284,6 @@ def save_report(
 def apply_matches(
     matches: list,
     write_mode: str,
-    create_backup: bool,
     min_confidence: float,
 ) -> tuple:
     """Apply GPS data from matches to target files. Returns (success, fail) counts."""
@@ -312,7 +310,6 @@ def apply_matches(
                 lat,
                 lon,
                 alt,
-                create_backup=create_backup,
                 stamp_after_write=True,
             )
             results.append(result)
@@ -476,8 +473,6 @@ Examples:
         print("     Use --apply to write GPS data")
     else:
         print("  ⚡ LIVE MODE — files will be modified")
-        if config["create_backup"]:
-            print(f"     Backups will be created ({BACKUP_EXT})")
     print()
 
     # ── Phase 1: Scan ──
@@ -621,7 +616,6 @@ Examples:
     success, fail = apply_matches(
         matches,
         write_mode=config["write_mode"],
-        create_backup=config["create_backup"],
         min_confidence=min_conf,
     )
 
@@ -634,7 +628,6 @@ Examples:
     print(f"  Successful:  {success:>6d}")
     print(f"  Failed:      {fail:>6d}")
     print(f"  Write mode:  {config['write_mode']}")
-    print(f"  Backups:     {'yes' if config['create_backup'] else 'no'}")
     print()
     print(f"  Timing: scan={scan_time:.1f}s, match={match_time:.1f}s, write={write_time:.1f}s, total={total_time:.1f}s")
     print()
