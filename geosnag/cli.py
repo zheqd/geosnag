@@ -473,10 +473,10 @@ Examples:
     if not is_dry_run and write_mode in ("exif", "both") and not _PYEXIV2_OK and not _EXIFTOOL:
         print("  ✗  No EXIF write backend available.")
         print()
-        print("     pyexiv2 could not be loaded (glibc version mismatch on older Synology DSM).")
+        print("     pyexiv2 could not be loaded (glibc version mismatch).")
         print("     ExifTool was not found at: exiftool, /opt/bin/exiftool, /usr/bin/exiftool")
         print()
-        print("     Install ExifTool via Entware:")
+        print("     On Synology DSM, install ExifTool via Entware:")
         print("       opkg install perl-image-exiftool")
         print()
         print("     Then re-run geosnag --apply")
