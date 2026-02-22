@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-End-to-end test for GeoSnag using real sample files.
+Integration tests for GeoSnag using real sample files.
 
-Tests the full pipeline: scan → match → write → verify
-Uses a minimal NEF fixture from tests/fixtures/.
-Tests the unified scanning approach (no camera/mobile split).
+Tests multiple components working together with real binary fixtures:
+scan → match → write → verify. Uses a minimal NEF + JPG fixture pair
+from tests/fixtures/.
 """
 
 import os
@@ -505,7 +505,7 @@ def test_writer_exiftool_backend():
 
 if __name__ == "__main__":
     print("=" * 55)
-    print("  GeoSnag End-to-End Tests (v0.1.1)")
+    print("  GeoSnag Integration Tests (v0.1.1)")
     print("=" * 55)
 
     test_scanner()
