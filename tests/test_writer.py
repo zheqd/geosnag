@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import geosnag.writer as writer_module
+from geosnag import writer as writer_module
 from geosnag.writer import (
     _find_exiftool,
     _has_pyexiv2,
@@ -28,7 +28,6 @@ from geosnag.writer import (
     stamp_processed,
     write_gps_to_exif,
 )
-
 
 # ---------------------------------------------------------------------------
 # _probe_cmd
