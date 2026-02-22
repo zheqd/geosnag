@@ -159,8 +159,11 @@ def scan_with_index(
                     scanned_results.append(meta)
                     progress.tick(error=bool(meta.scan_error))
 
-                    # Update index on main thread (futures resolve here)
-                    if index is not None:
+                    # Update index on main thread (futures resolve here).
+                    # Skip caching files with scan errors so they get
+                    # rescanned on the next run (transient errors like
+                    # NFS hiccups or locked files get a fresh attempt).
+                    if index is not None and not meta.scan_error:
                         index.update(meta)
 
                 except Exception as e:
