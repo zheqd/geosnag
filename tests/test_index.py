@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from geosnag.index import ScanIndex, _entry_to_photo, _photo_to_entry
-from geosnag.parallel import ScanProgress, _collect_file_paths, scan_with_index
+from geosnag.parallel import _collect_file_paths, scan_with_index
 from geosnag.scanner import PHOTO_EXTS, PhotoMeta
 
 SAMPLES_DIR = os.path.join(os.path.dirname(__file__), "..", "samples")
@@ -404,27 +404,6 @@ def test_index_serialization_roundtrip():
         check("Roundtrip: camera_model", restored.camera_model == original.camera_model)
         check("Roundtrip: geosnag_processed", restored.geosnag_processed == original.geosnag_processed)
         check("Roundtrip: scan_error", restored.scan_error == original.scan_error)
-
-
-# ─── ScanProgress Tests ───
-
-
-def test_progress_tracker():
-    """Test ScanProgress thread-safe counter."""
-    print("\n── ScanProgress ──")
-
-    progress = ScanProgress(100, report_every=50)
-    check("Progress: initial scanned=0", progress.scanned == 0)
-    check("Progress: initial errors=0", progress.errors == 0)
-    check("Progress: initial cache_hits=0", progress.cache_hits == 0)
-
-    progress.tick()
-    progress.tick(error=True)
-    progress.tick_cached()
-
-    check("Progress: scanned=3", progress.scanned == 3)
-    check("Progress: errors=1", progress.errors == 1)
-    check("Progress: cache_hits=1", progress.cache_hits == 1)
 
 
 # ─── _collect_file_paths Tests ───
@@ -1010,9 +989,6 @@ if __name__ == "__main__":
     test_index_version_mismatch()
     test_index_no_dirty_on_no_change()
     test_index_serialization_roundtrip()
-
-    # ScanProgress
-    test_progress_tracker()
 
     # _collect_file_paths
     test_collect_file_paths()

@@ -11,17 +11,19 @@ to maximize scan throughput:
 Thread safety:
   - scan_photo() is thread-safe (reads file, returns new object)
   - Index updates happen on main thread after pool completes
-  - Progress counter uses threading.Lock for accurate reporting
+  - tqdm progress bar is updated from the main thread (as_completed loop)
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import threading
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
+
+from tqdm import tqdm
 
 from . import PROJECT_NAME
 from .index import ScanIndex
@@ -44,49 +46,12 @@ def _collect_file_paths(
     return collect_photo_paths(directories, extensions, recursive, exclude_patterns)
 
 
-class ScanProgress:
-    """Thread-safe progress tracker."""
-
-    def __init__(self, total: int, report_every: int = 500):
-        self._lock = threading.Lock()
-        self._scanned = 0
-        self._errors = 0
-        self._cache_hits = 0
-        self.total = total
-        self.report_every = report_every
-
-    def tick(self, error: bool = False) -> None:
-        with self._lock:
-            self._scanned += 1
-            if error:
-                self._errors += 1
-            if self._scanned % self.report_every == 0:
-                logger.info(
-                    f"  Progress: {self._scanned}/{self.total} scanned "
-                    f"({self._cache_hits} cached, {self._errors} errors)"
-                )
-
-    def tick_cached(self) -> None:
-        with self._lock:
-            self._scanned += 1
-            self._cache_hits += 1
-            if self._scanned % self.report_every == 0:
-                logger.info(
-                    f"  Progress: {self._scanned}/{self.total} scanned "
-                    f"({self._cache_hits} cached, {self._errors} errors)"
-                )
-
-    @property
-    def scanned(self) -> int:
-        return self._scanned
-
-    @property
-    def errors(self) -> int:
-        return self._errors
-
-    @property
-    def cache_hits(self) -> int:
-        return self._cache_hits
+def _is_tty() -> bool:
+    """Check if stdout is a terminal (not piped/redirected)."""
+    try:
+        return sys.stdout.isatty()
+    except AttributeError:
+        return False
 
 
 def scan_with_index(
@@ -115,6 +80,7 @@ def scan_with_index(
         extensions = PHOTO_EXTS
 
     t0 = time.time()
+    use_bar = _is_tty()
 
     # Step 1: Collect all file paths (fast — just filesystem walk)
     logger.info(f"Collecting file paths from {len(directories)} directories...")
@@ -127,18 +93,28 @@ def scan_with_index(
     # Step 2: Split into cache hits and misses
     results = []  # type: list[PhotoMeta]
     to_scan = []  # type: list[str]
-    progress = ScanProgress(len(all_paths))
+    cache_hits = 0
+    error_count = 0
 
     if index is not None:
-        for filepath in all_paths:
-            cached = index.lookup(filepath)
-            if cached is not None:
-                results.append(cached)
-                progress.tick_cached()
-            else:
-                to_scan.append(filepath)
+        bar_desc = "  Checking index"
+        with tqdm(
+            total=len(all_paths),
+            desc=bar_desc,
+            unit=" files",
+            disable=not use_bar,
+            bar_format="  {desc}: {percentage:3.0f}%|{bar:30}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+        ) as pbar:
+            for filepath in all_paths:
+                cached = index.lookup(filepath)
+                if cached is not None:
+                    results.append(cached)
+                    cache_hits += 1
+                else:
+                    to_scan.append(filepath)
+                pbar.update(1)
 
-        logger.info(f"Index: {progress.cache_hits} cache hits, {len(to_scan)} need scanning")
+        logger.info(f"Index: {cache_hits} cache hits, {len(to_scan)} need scanning")
     else:
         to_scan = all_paths
 
@@ -149,33 +125,43 @@ def scan_with_index(
 
         scanned_results = []  # type: list[PhotoMeta]
 
-        with ThreadPoolExecutor(max_workers=actual_workers) as pool:
-            futures = {pool.submit(scan_photo, fp): fp for fp in to_scan}
+        with tqdm(
+            total=len(to_scan),
+            desc="  Scanning EXIF",
+            unit=" files",
+            disable=not use_bar,
+            bar_format="  {desc}: {percentage:3.0f}%|{bar:30}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+        ) as pbar:
+            with ThreadPoolExecutor(max_workers=actual_workers) as pool:
+                futures = {pool.submit(scan_photo, fp): fp for fp in to_scan}
 
-            for future in as_completed(futures):
-                filepath = futures[future]
-                try:
-                    meta = future.result()
-                    scanned_results.append(meta)
-                    progress.tick(error=bool(meta.scan_error))
+                for future in as_completed(futures):
+                    filepath = futures[future]
+                    try:
+                        meta = future.result()
+                        scanned_results.append(meta)
+                        if meta.scan_error:
+                            error_count += 1
 
-                    # Update index on main thread (futures resolve here).
-                    # Skip caching files with scan errors so they get
-                    # rescanned on the next run (transient errors like
-                    # NFS hiccups or locked files get a fresh attempt).
-                    if index is not None and not meta.scan_error:
-                        index.update(meta)
+                        # Update index on main thread (futures resolve here).
+                        # Skip caching files with scan errors so they get
+                        # rescanned on the next run (transient errors like
+                        # NFS hiccups or locked files get a fresh attempt).
+                        if index is not None and not meta.scan_error:
+                            index.update(meta)
 
-                except Exception as e:
-                    logger.error(f"Thread scan failed for {filepath}: {e}")
-                    meta = PhotoMeta(
-                        filepath=filepath,
-                        filename=os.path.basename(filepath),
-                        extension=os.path.splitext(filepath)[1].lower(),
-                        scan_error=str(e),
-                    )
-                    scanned_results.append(meta)
-                    progress.tick(error=True)
+                    except Exception as e:
+                        logger.error(f"Thread scan failed for {filepath}: {e}")
+                        meta = PhotoMeta(
+                            filepath=filepath,
+                            filename=os.path.basename(filepath),
+                            extension=os.path.splitext(filepath)[1].lower(),
+                            scan_error=str(e),
+                        )
+                        scanned_results.append(meta)
+                        error_count += 1
+
+                    pbar.update(1)
 
         results.extend(scanned_results)
 
@@ -185,9 +171,6 @@ def scan_with_index(
         index.prune(valid_paths)
 
     scan_time = time.time() - t0
-    logger.info(
-        f"Scan complete: {len(results)} photos in {scan_time:.1f}s "
-        f"({progress.cache_hits} cached, {progress.errors} errors)"
-    )
+    logger.info(f"Scan complete: {len(results)} photos in {scan_time:.1f}s ({cache_hits} cached, {error_count} errors)")
 
     return results
