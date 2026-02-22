@@ -223,7 +223,7 @@ def _write_gps_exiftool(
         ]
 
     if stamp:
-        args += [f"-UserComment={stamp}"]
+        args += [f"-Software={stamp}"]
 
     args.append(filepath)
 
@@ -235,7 +235,7 @@ def _write_gps_exiftool(
 def _stamp_exiftool(filepath: str, stamp: str, exiftool: List[str]) -> None:
     """Write stamp tag only via exiftool. Raises on failure."""
     result = subprocess.run(
-        [*exiftool, "-overwrite_original", f"-UserComment={stamp}", filepath],
+        [*exiftool, "-overwrite_original", f"-Software={stamp}", filepath],
         capture_output=True,
         text=True,
         timeout=30,

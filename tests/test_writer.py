@@ -263,11 +263,11 @@ class TestWriteGpsExiftool:
 
     def test_stamp_included(self):
         args = self._run(stamp="GeoSnag:v0.1.1:2026-01-01T00:00:00")
-        assert any("UserComment" in a for a in args)
+        assert any("Software" in a for a in args)
 
     def test_no_stamp_when_none(self):
         args = self._run(stamp=None)
-        assert not any("UserComment" in a for a in args)
+        assert not any("Software" in a for a in args)
 
     def test_filepath_is_last_arg(self):
         args = self._run(filepath="/photos/test.NEF")
@@ -307,7 +307,7 @@ class TestStampExiftool:
 
         assert args[0] == "exiftool"
         assert "-overwrite_original" in args
-        assert f"-UserComment={stamp}" in args
+        assert f"-Software={stamp}" in args
         assert args[-1] == "/tmp/test.NEF"
 
     def test_multi_word_cmd_spread(self):

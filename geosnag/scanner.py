@@ -97,22 +97,12 @@ def _parse_exif_datetime(dt_string: str) -> Optional[datetime]:
     return None
 
 
-def _uc_has_marker(uc_value: str) -> bool:
-    """
-    Return True if a UserComment value contains the GeoSnag marker.
-
-    ExifTool writes UserComment with a charset prefix, so pyexiv2 reads it
-    back as e.g. "charset=Ascii GeoSnag:v0.1.1:...". exifread may return it
-    as raw bytes or stripped. Using `in` handles all cases safely.
-    """
-    return GEOSNAG_MARKER_PREFIX in uc_value
-
-
 def _check_geosnag_tag_exifread(tags: dict) -> bool:
     """Check if GeoSnag processed tag is present via exifread tags."""
-    uc = tags.get("EXIF UserComment")
-    if uc:
-        return _uc_has_marker(str(uc))
+    # Exif.Image.Software is read by exifread as "Image Software"
+    val = tags.get("Image Software")
+    if val:
+        return str(val).startswith(GEOSNAG_MARKER_PREFIX)
     return False
 
 
@@ -124,8 +114,8 @@ def _check_geosnag_tag_pyexiv2(filepath: str) -> bool:
         img = pyexiv2.Image(filepath)
         exif = img.read_exif()
         img.close()
-        uc = exif.get(GEOSNAG_TAG, "")
-        return _uc_has_marker(uc)
+        val = exif.get(GEOSNAG_TAG, "")
+        return val.startswith(GEOSNAG_MARKER_PREFIX)
     except Exception:
         pass
     return False
@@ -284,12 +274,10 @@ def _scan_heic(filepath: str) -> dict:
                 except (TypeError, ValueError):
                     pass
 
-        # UserComment for GeoSnag tag
-        ifd_exif = exif.get_ifd(0x8769)
-        if ifd_exif:
-            uc = ifd_exif.get(0x9286, "")  # 0x9286 = UserComment
-            if _uc_has_marker(str(uc)):
-                result["geosnag_processed"] = True
+        # Software tag (IFD0, 0x0131) for GeoSnag processed marker
+        software = exif.get(0x0131, "")  # 0x0131 = Software
+        if str(software).startswith(GEOSNAG_MARKER_PREFIX):
+            result["geosnag_processed"] = True
 
         img.close()
 
