@@ -54,7 +54,7 @@ write_mode: exif
 # Dry run: scan and match but don't write anything
 dry_run: true
 
-# Skip photos already processed by GeoSnag (checks EXIF UserComment tag)
+# Skip photos already processed by GeoSnag (checks Exif.Image.Software tag)
 skip_processed: true
 
 # Performance: Scan index (caches EXIF data between runs)

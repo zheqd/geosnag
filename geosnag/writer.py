@@ -155,8 +155,10 @@ def _write_gps_pyexiv2(
         gps_data[GEOSNAG_TAG] = stamp
 
     img = pyexiv2.Image(filepath)
-    img.modify_exif(gps_data)
-    img.close()
+    try:
+        img.modify_exif(gps_data)
+    finally:
+        img.close()
 
 
 def _stamp_pyexiv2(filepath: str, stamp: str) -> None:
@@ -164,8 +166,10 @@ def _stamp_pyexiv2(filepath: str, stamp: str) -> None:
     import pyexiv2
 
     img = pyexiv2.Image(filepath)
-    img.modify_exif({GEOSNAG_TAG: stamp})
-    img.close()
+    try:
+        img.modify_exif({GEOSNAG_TAG: stamp})
+    finally:
+        img.close()
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +210,7 @@ def _write_gps_exiftool(
 
     args.append(filepath)
 
-    result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+    result = subprocess.run(args, capture_output=True, text=True, timeout=30, encoding="utf-8")
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "exiftool returned non-zero exit code")
 
@@ -230,7 +234,7 @@ def _stamp_exiftool(filepath: str, stamp: str, exiftool: List[str]) -> None:
 
 def stamp_processed(filepath: str) -> bool:
     """
-    Write the GeoSnag processed marker to a file's EXIF UserComment.
+    Write the GeoSnag processed marker to a file's Exif.Image.Software tag.
 
     Tries pyexiv2 first, falls back to exiftool. Returns True on success.
     """
@@ -274,6 +278,14 @@ def write_gps_to_exif(
     Returns:
         WriteResult with success/failure info
     """
+    if not (-90 <= latitude <= 90) or not (-180 <= longitude <= 180):
+        return WriteResult(
+            filepath=filepath,
+            success=False,
+            method="exif",
+            error=f"Invalid coordinates: ({latitude}, {longitude})",
+        )
+
     if not _PYEXIV2_OK and not _EXIFTOOL:
         return WriteResult(
             filepath=filepath,

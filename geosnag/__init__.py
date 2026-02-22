@@ -1,5 +1,10 @@
 # GeoSnag - Photo Geo-Tagging Tool for Synology NAS
-__version__ = "0.2.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("geosnag")
+except PackageNotFoundError:
+    __version__ = "0.0.0-dev"
 
 # ── Centralized project identity ──
 # Change ONLY these constants to rename the entire project.

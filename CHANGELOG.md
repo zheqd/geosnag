@@ -7,60 +7,83 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.2.1] — 2026-02-22
+
+### Fixed
+
+- **PIL Image file descriptor leak** in HEIC scanner — `Image.open()` was not closed
+  on exception. Now uses a context manager (`with Image.open(...) as img:`).
+- **pyexiv2 Image leak** in scanner and writer — `img.close()` was skipped when
+  `read_exif()` or `modify_exif()` raised. Now wrapped in `try/finally` (3 sites).
+- **GPS coordinate validation** added to `write_gps_to_exif()` — rejects writes with
+  out-of-range latitude/longitude before calling the backend.
+- **CLI backend validation** — `geosnag --apply` now exits immediately with a clear
+  install message when no EXIF write backend is available (instead of scanning 2889
+  files and failing each one individually). Dry-run mode is unaffected.
+- Outdated `UserComment` references in `stamp_processed()` docstring and
+  `config.example.yaml` comment updated to `Exif.Image.Software`.
+- Hardcoded version `v0.1.1` in `test_integration.py` replaced with dynamic
+  `__version__` import.
+- `matches_report.html` added to `.gitignore`.
+
+### Changed
+
+- **`pyexiv2` moved to optional dependency.** Core install (`pip install geosnag`)
+  now requires `exifread`, `pillow-heif`, and `PyYAML`. Install pyexiv2 via
+  `pip install geosnag[all]`. This unblocks installation on Synology NAS where
+  `libexiv2` is unavailable.
+- **`pillow-heif` promoted to core dependency.** HEIC/HEIF is the default iPhone
+  format and too common to leave optional. The `[heic]` extra has been removed.
+- **ExifTool vendoring removed.** The 20 MB vendored Perl distribution still required
+  a system Perl interpreter, providing no benefit over `opkg install perl-image-exiftool`.
+  Removed `scripts/download_exiftool.py`, `geosnag/vendor/`, related CI bundle step,
+  `MANIFEST.in` vendor include, and `[tool.setuptools.package-data]`.
+- `_find_exiftool()` simplified to probe system binaries only: `exiftool`,
+  `/opt/bin/exiftool`, `/usr/bin/exiftool`.
+- Explicit `encoding="utf-8"` added to exiftool `subprocess.run()` calls for
+  robustness with non-ASCII file paths.
+- Version string deduplicated — `__init__.py` now reads from `importlib.metadata`
+  instead of duplicating the version from `pyproject.toml`.
+- Redundant `Pillow` direct dependency removed (pulled transitively by `pillow-heif`).
+- Release workflow split into `build` and `publish` jobs; `publish` uses
+  `environment: pypi` for OIDC trusted publishing with optional approval gate.
+- README quick start updated with `pip install geosnag[all]` as primary and
+  Synology-specific minimal install path.
+- `CODEOWNERS` and importable GitHub branch ruleset added.
+
+---
+
 ## [0.2.0] — 2026-02-22
 
 ### Added
 
 - **ExifTool fallback backend** (`geosnag/writer.py`). When `pyexiv2`/`libexiv2` is
   unavailable (e.g. Synology DSM with glibc < 2.32), GPS writes automatically fall back
-  to ExifTool. Probe order: vendored copy first, then system binary
-  (`exiftool`, `/opt/bin/exiftool`, `/usr/bin/exiftool`).
-- **Vendored ExifTool** (`geosnag/vendor/exiftool/`). A copy of ExifTool 13.50 can be
-  bundled into the wheel via `python scripts/download_exiftool.py` (run by CI before
-  `python -m build`). The vendor directory is `.gitignore`d but included in the
-  sdist/wheel via `MANIFEST.in` and `[tool.setuptools.package-data]`.
-- **`scripts/download_exiftool.py`** — downloads ExifTool from GitHub, extracts it to
-  the vendor directory, and verifies the install with `perl exiftool -ver`.
-- **Unit tests for the writer module** (`tests/test_writer.py`, 46 tests). Covers
-  `_probe_cmd`, `_has_pyexiv2`, `_find_exiftool` (vendored-before-system probe order),
-  `_write_gps_exiftool` (all argument combinations including altitude and stamp),
-  `_stamp_exiftool`, and the pyexiv2/exiftool/neither routing in `write_gps_to_exif`
-  and `stamp_processed`.
+  to ExifTool. Probed at: `exiftool`, `/opt/bin/exiftool`, `/usr/bin/exiftool`.
+- **Unit tests for the writer module** (`tests/test_writer.py`). Covers `_probe_cmd`,
+  `_has_pyexiv2`, `_find_exiftool`, `_write_gps_exiftool` (all argument combinations),
+  `_stamp_exiftool`, and the pyexiv2/exiftool/neither routing.
 - **CLI end-to-end tests** (`tests/test_e2e.py`, 32 tests). Invokes
   `python -m geosnag.cli` as a subprocess and verifies exit codes, stdout content, and
-  filesystem side effects (GPS written, XMP sidecar created, CSV report saved, stamp
-  set, re-run skips processed files).
+  filesystem side effects.
 - **ExifTool integration test** in `tests/test_integration.py`. Patches `_PYEXIV2_OK=False`
-  and runs a real ExifTool write against the NEF fixture, verifying GPS coordinates and
-  the processed stamp are present after the write.
-- `libimage-exiftool-perl` added to CI apt-get dependencies so the ExifTool integration
-  test runs in GitHub Actions.
+  and runs a real ExifTool write against the NEF fixture.
+- `libimage-exiftool-perl` added to CI apt-get dependencies.
 
 ### Changed
 
 - **Processed-file stamp field migrated from `Exif.Photo.UserComment` to
   `Exif.Image.Software`**. The new field has no charset-prefix ambiguity and is
-  semantically more appropriate for a tool tag. All three scanner paths updated
-  (exifread: `"Image Software"` key; pyexiv2: `PROJECT_TAG`; Pillow/HEIC: IFD0 tag
-  `0x0131`). **Note**: files stamped by v0.1.x will not be recognised as processed and
-  will be re-evaluated once, after which they receive the new stamp.
-- `PROJECT_TAG` constant in `geosnag/__init__.py` changed from
-  `Exif.Photo.UserComment` to `Exif.Image.Software`. All writer and scanner code derives
-  the field name from this constant.
-- ExifTool stamp argument changed from `-UserComment=` to `-Software=` to match the
-  migrated field.
-- `test_e2e.py` renamed to `test_integration.py` (Python-import–level tests that invoke
-  real files). CLI subprocess tests added as a new `test_e2e.py`.
-- `Makefile` `test` target updated to include `test_writer.py` and the new `test_e2e.py`.
-- `release.yml` CI workflow: installs `libimage-exiftool-perl`, runs
-  `download_exiftool.py` before `python -m build`, runs all four test suites.
+  semantically more appropriate for a tool tag. All three scanner paths updated.
+  **Note**: files stamped by v0.1.x will be re-evaluated once, after which they
+  receive the new stamp.
+- `test_e2e.py` renamed to `test_integration.py`. CLI subprocess tests added as a
+  new `test_e2e.py`.
 
 ### Fixed
 
-- ExifTool was writing `UserComment` with a `charset=Ascii ` prefix that caused the
-  `startswith("GeoSnag:")` check in the scanner to silently fail — processed files were
-  being rescanned on every run. Eliminated entirely by migrating to `Exif.Image.Software`,
-  which ExifTool writes without a charset prefix.
+- ExifTool `UserComment` charset-prefix bug that caused processed files to be
+  rescanned on every run. Eliminated by migrating to `Exif.Image.Software`.
 
 ---
 

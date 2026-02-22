@@ -66,7 +66,7 @@ GeoSnag was designed for Synology NAS environments:
 ## Quick Start
 
 ```bash
-pip install geosnag
+pip install geosnag[all]    # full install (includes pyexiv2 write backend)
 
 curl -O https://raw.githubusercontent.com/zheqd/geosnag/main/config.example.yaml
 cp config.example.yaml config.yaml
@@ -74,6 +74,13 @@ nano config.yaml    # set your photo directories
 
 geosnag             # dry run — preview matches
 geosnag --apply     # write GPS data
+```
+
+On Synology NAS where pyexiv2/libexiv2 is unavailable, install ExifTool as the write backend:
+
+```bash
+pip install geosnag            # minimal install (no pyexiv2)
+opkg install perl-image-exiftool
 ```
 
 If PyPI is not available (e.g. air-gapped Synology NAS), install the latest wheel directly from GitHub:
@@ -176,12 +183,11 @@ config.example.yaml  Configuration template
 
 - Python 3.9 or later
 - **exifread** — EXIF metadata reading
-- **pyexiv2** — EXIF/XMP metadata writing (requires libexiv2 system library)
-- **pillow-heif** — HEIC/HEIF format support
-- **Pillow** — image processing
+- **pillow-heif** — HEIC/HEIF format support (pulls in Pillow automatically)
 - **PyYAML** — configuration file parsing
+- **pyexiv2** *(optional)* — EXIF/XMP metadata writing (requires libexiv2 system library)
 
-All Python dependencies are installed automatically via `pip install .`. On Synology NAS, you may need to install `libexiv2` separately — see [INSTALL.md](INSTALL.md).
+All Python dependencies are installed automatically via `pip install .`. pyexiv2 is optional — install with `pip install geosnag[all]` or use ExifTool as the write backend. On Synology NAS, you may need to install `libexiv2` separately — see [INSTALL.md](INSTALL.md).
 
 ## Testing
 
