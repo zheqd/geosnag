@@ -28,6 +28,7 @@ from collections import defaultdict
 from datetime import timedelta
 
 import yaml
+from tqdm import tqdm
 
 from . import INDEX_FILENAME, PROJECT_NAME
 from . import __version__ as VERSION
@@ -53,20 +54,44 @@ def _build_source_fingerprints(all_photos: list) -> dict:
     return {date: hashlib.sha256("|".join(sorted(paths)).encode()).hexdigest()[:16] for date, paths in by_date.items()}
 
 
+class _TqdmLoggingHandler(logging.Handler):
+    """Logging handler that uses tqdm.write() to avoid breaking progress bars."""
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            tqdm.write(msg, file=sys.stdout)
+        except Exception:
+            self.handleError(record)
+
+
 def setup_logging(level: str = "INFO", log_file: str = None):
-    """Configure logging with console and optional file output."""
+    """Configure logging with console and optional file output.
+
+    Uses a tqdm-aware handler so log messages don't break progress bars.
+    """
     log_level = getattr(logging, level.upper(), logging.INFO)
 
-    handlers = [logging.StreamHandler(sys.stdout)]
+    console_handler = _TqdmLoggingHandler()
+    console_handler.setFormatter(
+        logging.Formatter(
+            fmt="%(asctime)s [%(levelname)-7s] %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    handlers: list[logging.Handler] = [console_handler]
     if log_file:
         handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
 
     logging.basicConfig(
         level=log_level,
-        format="%(asctime)s [%(levelname)-7s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
         handlers=handlers,
     )
+
+    # Suppress noisy warnings from exifread (e.g. "PNG file does not have exif data")
+    # unless running in verbose/DEBUG mode.
+    if log_level > logging.DEBUG:
+        logging.getLogger("exifread").setLevel(logging.ERROR)
 
 
 def load_config(config_path: str) -> dict:
