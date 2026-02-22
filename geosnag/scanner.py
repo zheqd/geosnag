@@ -112,8 +112,10 @@ def _check_geosnag_tag_pyexiv2(filepath: str) -> bool:
         import pyexiv2
 
         img = pyexiv2.Image(filepath)
-        exif = img.read_exif()
-        img.close()
+        try:
+            exif = img.read_exif()
+        finally:
+            img.close()
         val = exif.get(GEOSNAG_TAG, "")
         return val.startswith(GEOSNAG_MARKER_PREFIX)
     except Exception:
@@ -213,77 +215,71 @@ def _scan_heic(filepath: str) -> dict:
 
         register_heif_opener()
 
-        img = Image.open(filepath)
-        exif = img.getexif()
+        with Image.open(filepath) as img:
+            exif = img.getexif()
 
-        if not exif:
-            img.close()
-            return result
+            if not exif:
+                return result
 
-        # Camera info
-        if ExifBase.Make in exif:
-            result["camera_make"] = str(exif[ExifBase.Make]).strip()
-        if ExifBase.Model in exif:
-            result["camera_model"] = str(exif[ExifBase.Model]).strip()
+            # Camera info
+            if ExifBase.Make in exif:
+                result["camera_make"] = str(exif[ExifBase.Make]).strip()
+            if ExifBase.Model in exif:
+                result["camera_model"] = str(exif[ExifBase.Model]).strip()
 
-        # DateTime
-        for tag_id in [ExifBase.DateTimeOriginal, ExifBase.DateTimeDigitized, ExifBase.DateTime]:
-            if tag_id in exif:
-                result["datetime_original"] = _parse_exif_datetime(str(exif[tag_id]))
-                if result["datetime_original"]:
-                    break
-            # Also check IFD sub-dictionaries
-            ifd = exif.get_ifd(0x8769)  # Exif IFD
-            if ifd and tag_id in ifd:
-                result["datetime_original"] = _parse_exif_datetime(str(ifd[tag_id]))
-                if result["datetime_original"]:
-                    break
+            # DateTime
+            for tag_id in [ExifBase.DateTimeOriginal, ExifBase.DateTimeDigitized, ExifBase.DateTime]:
+                if tag_id in exif:
+                    result["datetime_original"] = _parse_exif_datetime(str(exif[tag_id]))
+                    if result["datetime_original"]:
+                        break
+                # Also check IFD sub-dictionaries
+                ifd = exif.get_ifd(0x8769)  # Exif IFD
+                if ifd and tag_id in ifd:
+                    result["datetime_original"] = _parse_exif_datetime(str(ifd[tag_id]))
+                    if result["datetime_original"]:
+                        break
 
-        # GPS IFD
-        gps_ifd = exif.get_ifd(0x8825)  # GPS IFD
-        if gps_ifd:
-            lat_data = gps_ifd.get(2)  # GPSLatitude
-            lat_ref = gps_ifd.get(1, "N")  # GPSLatitudeRef
-            lon_data = gps_ifd.get(4)  # GPSLongitude
-            lon_ref = gps_ifd.get(3, "E")  # GPSLongitudeRef
+            # GPS IFD
+            gps_ifd = exif.get_ifd(0x8825)  # GPS IFD
+            if gps_ifd:
+                lat_data = gps_ifd.get(2)  # GPSLatitude
+                lat_ref = gps_ifd.get(1, "N")  # GPSLatitudeRef
+                lon_data = gps_ifd.get(4)  # GPSLongitude
+                lon_ref = gps_ifd.get(3, "E")  # GPSLongitudeRef
 
-            if lat_data and lon_data:
-                try:
-                    lat = float(lat_data[0]) + float(lat_data[1]) / 60 + float(lat_data[2]) / 3600
-                    lon = float(lon_data[0]) + float(lon_data[1]) / 60 + float(lon_data[2]) / 3600
-                    if lat_ref == "S":
-                        lat = -lat
-                    if lon_ref == "W":
-                        lon = -lon
-                    if -90 <= lat <= 90 and -180 <= lon <= 180:
-                        result["has_gps"] = True
-                        result["gps_latitude"] = lat
-                        result["gps_longitude"] = lon
-                except (TypeError, ValueError, IndexError):
-                    pass
+                if lat_data and lon_data:
+                    try:
+                        lat = float(lat_data[0]) + float(lat_data[1]) / 60 + float(lat_data[2]) / 3600
+                        lon = float(lon_data[0]) + float(lon_data[1]) / 60 + float(lon_data[2]) / 3600
+                        if lat_ref == "S":
+                            lat = -lat
+                        if lon_ref == "W":
+                            lon = -lon
+                        if -90 <= lat <= 90 and -180 <= lon <= 180:
+                            result["has_gps"] = True
+                            result["gps_latitude"] = lat
+                            result["gps_longitude"] = lon
+                    except (TypeError, ValueError, IndexError):
+                        pass
 
-            # Altitude
-            alt_data = gps_ifd.get(6)  # GPSAltitude
-            if alt_data is not None:
-                try:
-                    alt = float(alt_data)
-                    alt_ref = gps_ifd.get(5, 0)
-                    if alt_ref == 1:
-                        alt = -alt
-                    result["gps_altitude"] = alt
-                except (TypeError, ValueError):
-                    pass
+                # Altitude
+                alt_data = gps_ifd.get(6)  # GPSAltitude
+                if alt_data is not None:
+                    try:
+                        alt = float(alt_data)
+                        alt_ref = gps_ifd.get(5, 0)
+                        if alt_ref == 1:
+                            alt = -alt
+                        result["gps_altitude"] = alt
+                    except (TypeError, ValueError):
+                        pass
 
-        # Software tag (IFD0, 0x0131) for GeoSnag processed marker
-        software = exif.get(0x0131, "")  # 0x0131 = Software
-        if str(software).startswith(GEOSNAG_MARKER_PREFIX):
-            result["geosnag_processed"] = True
+            # Software tag (IFD0, 0x0131) for GeoSnag processed marker
+            software = exif.get(0x0131, "")  # 0x0131 = Software
+            if str(software).startswith(GEOSNAG_MARKER_PREFIX):
+                result["geosnag_processed"] = True
 
-        img.close()
-
-    except ImportError:
-        logger.warning("pillow-heif not installed. HEIC files will be skipped.")
-        result["scan_error"] = "pillow-heif not installed"
     except Exception as e:
         logger.debug(f"HEIC scan error for {filepath}: {e}")
         result["scan_error"] = str(e)

@@ -19,11 +19,9 @@ build/
 *.geosnag.bak
 config.yaml
 
-# Claude / AI working docs
-.claude/
-
 # Test artifacts
 test_report.csv
+matches_report.html
 config_test.yaml
 tests/testdata/
 

@@ -505,7 +505,9 @@ def test_writer_exiftool_backend():
 
 if __name__ == "__main__":
     print("=" * 55)
-    print("  GeoSnag Integration Tests (v0.1.1)")
+    from geosnag import __version__
+
+    print(f"  GeoSnag Integration Tests (v{__version__})")
     print("=" * 55)
 
     test_scanner()
