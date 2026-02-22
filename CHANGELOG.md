@@ -7,6 +7,31 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.3.0] — 2026-02-22
+
+### Changed
+
+- **Binary search matching** — matcher uses `bisect` for O(n·log m) closest-
+  timestamp lookup instead of O(n·m) linear scan. Significant speedup for
+  dates with many GPS sources.
+- **Single `os.stat()` per index lookup** — replaced two separate
+  `os.path.getmtime()` + `os.path.getsize()` calls with one `os.stat()`,
+  halving syscalls during the cache-hit path (~30K files).
+- **Lazy PIL/pillow-heif loading** — `PIL` and `pillow_heif` are imported on
+  first HEIC file encounter, shaving ~200 ms off startup for non-HEIC libraries.
+- **Index schema v5** — `scan_error` dropped from persisted entries (transient,
+  re-evaluated on rescan). Match cache now uses a generation counter for O(1)
+  invalidation instead of O(n) field removal.
+- **Auto-detect worker count** — default scan threads set to
+  `int(cpu_count × 0.75)` instead of hardcoded 4, adapting to the host machine.
+- **Directory pruning during walk** — `@eaDir`, `#recycle`, `.git`,
+  `__pycache__`, `.geosnag` are pruned in-place during `os.walk`, preventing
+  descent into Synology system directories.
+- **Walk progress reporting** — large directory walks (200+ dirs) now log
+  periodic progress updates.
+
+---
+
 ## [0.2.3] — 2026-02-22
 
 ### Fixed

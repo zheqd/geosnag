@@ -21,17 +21,35 @@ from datetime import datetime
 from typing import Optional
 
 import exifread
-from PIL import Image
-from PIL.ExifTags import Base as ExifBase
-from pillow_heif import register_heif_opener
 
 from . import MARKER_PREFIX, PROJECT_NAME, PROJECT_TAG
 
 logger = logging.getLogger(f"{PROJECT_NAME.lower()}.scanner")
 
-# Register HEIF/HEIC opener once at import time (idempotent but avoids
-# repeated registration in the thread pool).
-register_heif_opener()
+# Lazy PIL/pillow-heif imports — only loaded on first HEIC file encounter.
+# This shaves ~200 ms off startup when scanning non-HEIC libraries.
+_Image = None
+_ExifBase = None
+_heif_registered = False
+
+
+def _ensure_heif():
+    """Lazy-import PIL + pillow-heif on first use."""
+    global _Image, _ExifBase, _heif_registered
+    if _heif_registered:
+        return
+    from PIL import Image as _PILImage
+    from PIL.ExifTags import Base as _PILExifBase
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+    _Image = _PILImage
+    _ExifBase = _PILExifBase
+    _heif_registered = True
+
+
+# Directories always excluded from recursive walks (Synology system dirs, etc.)
+EXCLUDED_DIRS = {"@eaDir", "#recycle", ".git", "__pycache__", ".geosnag"}
 
 # All supported photo extensions (unified — no camera/mobile split)
 PHOTO_EXTS = {
@@ -216,21 +234,23 @@ def _scan_heic(filepath: str) -> dict:
         "scan_error": None,
     }
 
+    _ensure_heif()
+
     try:
-        with Image.open(filepath) as img:
+        with _Image.open(filepath) as img:
             exif = img.getexif()
 
             if not exif:
                 return result
 
             # Camera info
-            if ExifBase.Make in exif:
-                result["camera_make"] = str(exif[ExifBase.Make]).strip()
-            if ExifBase.Model in exif:
-                result["camera_model"] = str(exif[ExifBase.Model]).strip()
+            if _ExifBase.Make in exif:
+                result["camera_make"] = str(exif[_ExifBase.Make]).strip()
+            if _ExifBase.Model in exif:
+                result["camera_model"] = str(exif[_ExifBase.Model]).strip()
 
             # DateTime
-            for tag_id in [ExifBase.DateTimeOriginal, ExifBase.DateTimeDigitized, ExifBase.DateTime]:
+            for tag_id in [_ExifBase.DateTimeOriginal, _ExifBase.DateTimeDigitized, _ExifBase.DateTime]:
                 if tag_id in exif:
                     result["datetime_original"] = _parse_exif_datetime(str(exif[tag_id]))
                     if result["datetime_original"]:
@@ -348,6 +368,7 @@ def collect_photo_paths(
         extensions = PHOTO_EXTS
 
     paths = []
+    dirs_walked = 0
     for directory in directories:
         if not os.path.isdir(directory):
             logger.warning(f"Directory not found, skipping: {directory}")
@@ -355,8 +376,16 @@ def collect_photo_paths(
 
         walker = os.walk(directory) if recursive else [(directory, [], os.listdir(directory))]
         for root, dirs, files in walker:
-            if not recursive:
+            # Prune excluded directories in-place to prevent os.walk from descending
+            if recursive:
+                dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS]
+            else:
                 files = [f for f in files if os.path.isfile(os.path.join(root, f))]
+
+            dirs_walked += 1
+            if dirs_walked % 200 == 0:
+                logger.info(f"  Walking directories... {dirs_walked} visited, {len(paths)} photos found")
+
             for fname in sorted(files):
                 ext = os.path.splitext(fname)[1].lower()
                 if ext not in extensions:
@@ -375,6 +404,9 @@ def collect_photo_paths(
                         continue
 
                 paths.append(filepath)
+
+    if dirs_walked >= 200:
+        logger.info(f"  Walk complete: {dirs_walked} directories, {len(paths)} photos")
 
     return paths
 

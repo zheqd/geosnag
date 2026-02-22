@@ -9,8 +9,9 @@ on subsequent runs if the set of GPS sources for that date hasn't changed.
 
 Index structure:
   {
-    "version": 4,
+    "version": 5,
     "match_threshold_minutes": 120,
+    "match_generation": 0,
     "entries": {
       "/abs/path/photo.nef": {
         "mtime": 1234567890.123,
@@ -23,12 +24,16 @@ Index structure:
         "camera_make": "NIKON CORPORATION",
         "camera_model": "NIKON D610",
         "geosnag_processed": false,
-        "scan_error": null,
         "match_status": null,
-        "match_source_fp": null
+        "match_source_fp": null,
+        "match_gen": 0
       }
     }
   }
+
+Changes in v5: scan_error not stored — files with errors are not cached
+at all, so they get a fresh scan attempt on the next run.
+Match cache uses generation counter for O(1) invalidation.
 """
 
 from __future__ import annotations
@@ -44,7 +49,7 @@ from .scanner import PhotoMeta
 
 logger = logging.getLogger(f"{PROJECT_NAME.lower()}.index")
 
-INDEX_VERSION = 4
+INDEX_VERSION = 5
 
 
 def _default_index_path(config_path: str) -> str:
@@ -54,10 +59,15 @@ def _default_index_path(config_path: str) -> str:
 
 
 def _photo_to_entry(meta: PhotoMeta) -> dict:
-    """Convert PhotoMeta to serializable index entry."""
+    """Convert PhotoMeta to serializable index entry.
+
+    Note: scan_error is intentionally omitted — transient errors are
+    re-evaluated on the next scan and not needed for the matching pipeline.
+    """
+    mtime, size = _stat_file(meta.filepath)
     return {
-        "mtime": _get_mtime(meta.filepath),
-        "size": _get_size(meta.filepath),
+        "mtime": mtime,
+        "size": size,
         "datetime_original": meta.datetime_original.isoformat() if meta.datetime_original else None,
         "has_gps": meta.has_gps,
         "gps_latitude": meta.gps_latitude,
@@ -66,7 +76,6 @@ def _photo_to_entry(meta: PhotoMeta) -> dict:
         "camera_make": meta.camera_make,
         "camera_model": meta.camera_model,
         "geosnag_processed": meta.geosnag_processed,
-        "scan_error": meta.scan_error,
     }
 
 
@@ -92,22 +101,17 @@ def _entry_to_photo(filepath: str, entry: dict) -> PhotoMeta:
         camera_make=entry.get("camera_make"),
         camera_model=entry.get("camera_model"),
         geosnag_processed=entry.get("geosnag_processed", False),
-        scan_error=entry.get("scan_error"),
+        # scan_error not stored in index — transient, re-evaluated on rescan
     )
 
 
-def _get_mtime(filepath: str) -> Optional[float]:
+def _stat_file(filepath: str) -> tuple[Optional[float], Optional[int]]:
+    """Return (mtime, size) from a single os.stat() call, or (None, None) on error."""
     try:
-        return os.path.getmtime(filepath)
+        st = os.stat(filepath)
+        return st.st_mtime, st.st_size
     except OSError:
-        return None
-
-
-def _get_size(filepath: str) -> Optional[int]:
-    try:
-        return os.path.getsize(filepath)
-    except OSError:
-        return None
+        return None, None
 
 
 class ScanIndex:
@@ -134,6 +138,7 @@ class ScanIndex:
         self.entries = {}  # type: dict[str, dict]
         self._dirty = False
         self._match_threshold_minutes = None  # cached max_time_delta config
+        self._match_generation = 0  # bumped when match cache is invalidated
 
     def load(self) -> int:
         """Load index from disk. Returns number of cached entries."""
@@ -152,6 +157,7 @@ class ScanIndex:
 
             self.entries = data.get("entries", {})
             self._match_threshold_minutes = data.get("match_threshold_minutes")
+            self._match_generation = data.get("match_generation", 0)
             logger.info(f"Loaded index with {len(self.entries)} cached entries")
             return len(self.entries)
 
@@ -169,6 +175,7 @@ class ScanIndex:
         data = {
             "version": INDEX_VERSION,
             "match_threshold_minutes": self._match_threshold_minutes,
+            "match_generation": self._match_generation,
             "entries": self.entries,
         }
 
@@ -200,16 +207,11 @@ class ScanIndex:
         if entry is None:
             return None
 
-        current_mtime = _get_mtime(filepath)
-        current_size = _get_size(filepath)
-
-        cached_mtime = entry.get("mtime")
-        cached_size = entry.get("size")
-
-        if current_mtime is None or current_size is None:
+        current_mtime, current_size = _stat_file(filepath)
+        if current_mtime is None:
             return None
 
-        if cached_mtime != current_mtime or cached_size != current_size:
+        if entry.get("mtime") != current_mtime or entry.get("size") != current_size:
             return None
 
         return _entry_to_photo(filepath, entry)
@@ -233,6 +235,7 @@ class ScanIndex:
         """Clear all entries and match threshold."""
         self.entries = {}
         self._match_threshold_minutes = None
+        self._match_generation = 0
         self._dirty = True
 
     # ── Match cache methods ──────────────────────────────────────────────
@@ -249,16 +252,21 @@ class ScanIndex:
             return
         self.entries[filepath]["match_status"] = status
         self.entries[filepath]["match_source_fp"] = source_fingerprint
+        self.entries[filepath]["match_gen"] = self._match_generation
         self._dirty = True
 
     def get_match_result(self, filepath: str) -> tuple:
         """Retrieve cached match result for a photo.
 
         Returns:
-            (match_status, source_fingerprint) or (None, None) if not cached.
+            (match_status, source_fingerprint) or (None, None) if not cached
+            or if the entry's generation is stale.
         """
         entry = self.entries.get(filepath)
         if entry is None:
+            return None, None
+        # Stale generation → treat as uncached (O(1) instead of O(n) wipe)
+        if entry.get("match_gen", 0) != self._match_generation:
             return None, None
         return entry.get("match_status"), entry.get("match_source_fp")
 
@@ -266,7 +274,8 @@ class ScanIndex:
         """Check if cached match results are still valid for the current threshold.
 
         If stored max_time_delta_minutes differs from current config, all match
-        caches are invalidated (a different threshold may produce different results).
+        caches are invalidated by bumping the generation counter (O(1) instead
+        of iterating every entry).
 
         Returns True if threshold is unchanged, False if match caches were cleared.
         """
@@ -274,9 +283,7 @@ class ScanIndex:
             return True
         old = self._match_threshold_minutes or "not set"
         logger.info(f"Match threshold changed ({old} → {current_minutes}), clearing match cache")
-        for entry in self.entries.values():
-            entry.pop("match_status", None)
-            entry.pop("match_source_fp", None)
+        self._match_generation += 1  # stale entries detected on read via match_gen
         self._match_threshold_minutes = current_minutes
         self._dirty = True
         return False
