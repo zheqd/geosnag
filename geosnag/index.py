@@ -187,8 +187,8 @@ class ScanIndex:
             if os.path.exists(tmp_path):
                 try:
                     os.remove(tmp_path)
-                except OSError:
-                    pass
+                except OSError as cleanup_err:
+                    logger.warning(f"Could not clean up temp index file {tmp_path}: {cleanup_err}")
 
     def lookup(self, filepath: str) -> Optional[PhotoMeta]:
         """
@@ -272,9 +272,8 @@ class ScanIndex:
         """
         if self._match_threshold_minutes == current_minutes:
             return True
-        logger.info(
-            f"Match threshold changed ({self._match_threshold_minutes} → {current_minutes}), clearing match cache"
-        )
+        old = self._match_threshold_minutes or "not set"
+        logger.info(f"Match threshold changed ({old} → {current_minutes}), clearing match cache")
         for entry in self.entries.values():
             entry.pop("match_status", None)
             entry.pop("match_source_fp", None)

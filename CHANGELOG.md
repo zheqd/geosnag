@@ -7,6 +7,45 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.2.2] — 2026-02-22
+
+### Fixed
+
+- **Division by zero in matcher** when `max_time_delta_minutes: 0`. Now returns
+  100% confidence for exact-timestamp matches instead of crashing.
+- **GPS coordinates removed from debug logs** — `writer.py` no longer logs
+  lat/lon at 6-decimal precision, preventing accidental location data exposure
+  in log files.
+- **Stale `create_backup` parameter** removed from README and INSTALL.md config
+  examples (feature was removed in v0.1.1).
+- **HEIC altitude conversion** now logs failures at debug level instead of
+  silently swallowing them.
+- **ExifTool error messages** truncated to 500 characters to prevent unbounded
+  stderr in `RuntimeError`.
+- **Temp index file cleanup** failures now logged as warnings instead of
+  silently ignored.
+- **Match cache threshold log** no longer shows `None` on first run.
+- Hardcoded `v0.3.0` in `test_index.py` replaced with dynamic `__version__`.
+
+### Changed
+
+- **Config validation** — `max_time_delta_minutes` rejects negative values;
+  `min_confidence` enforces 0–100 range. Invalid config now raises `ValueError`
+  with a clear message at startup.
+- **Processed marker timestamp** switched from local time to UTC (suffix `Z`).
+- **CI expanded** — `lint-and-test.yml` now runs `test_writer.py`,
+  `test_special_paths.py`, and `test_integration.py` alongside existing tests.
+- **`register_heif_opener()` called once at module level** instead of per-file
+  in `_scan_heic()`, eliminating repeated PIL state mutation in the thread pool.
+- **Directory traversal deduplicated** — `collect_photo_paths()` in `scanner.py`
+  is the single implementation; `parallel.py._collect_file_paths()` delegates to
+  it.
+- **HEIC test fixtures added** — `phone_with_gps.heic` and `phone_no_gps.heic`
+  with 4 new E2E tests covering HEIC scanning and matching.
+- Vendored `geosnag/vendor/.gitkeep` removed.
+
+---
+
 ## [0.2.1] — 2026-02-22
 
 ### Fixed

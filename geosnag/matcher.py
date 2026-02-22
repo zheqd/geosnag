@@ -199,7 +199,8 @@ def match_photos(
                     best_delta = delta
 
         if best_match and best_delta is not None:
-            confidence = 100.0 * (1.0 - best_delta.total_seconds() / max_time_delta.total_seconds())
+            max_seconds = max_time_delta.total_seconds()
+            confidence = 100.0 if max_seconds == 0 else 100.0 * (1.0 - best_delta.total_seconds() / max_seconds)
             confidence = max(0.0, min(100.0, confidence))
 
             # Signed delta: positive = target after source, negative = target before

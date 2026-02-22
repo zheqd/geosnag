@@ -13,6 +13,7 @@ Supported formats:
 
 from __future__ import annotations
 
+import fnmatch
 import logging
 import os
 from dataclasses import dataclass
@@ -20,10 +21,17 @@ from datetime import datetime
 from typing import Optional
 
 import exifread
+from PIL import Image
+from PIL.ExifTags import Base as ExifBase
+from pillow_heif import register_heif_opener
 
 from . import MARKER_PREFIX, PROJECT_NAME, PROJECT_TAG
 
 logger = logging.getLogger(f"{PROJECT_NAME.lower()}.scanner")
+
+# Register HEIF/HEIC opener once at import time (idempotent but avoids
+# repeated registration in the thread pool).
+register_heif_opener()
 
 # All supported photo extensions (unified — no camera/mobile split)
 PHOTO_EXTS = {
@@ -134,6 +142,7 @@ def _scan_with_exifread(filepath: str) -> dict:
         "camera_make": None,
         "camera_model": None,
         "geosnag_processed": False,
+        "scan_error": None,
     }
 
     with open(filepath, "rb") as f:
@@ -204,17 +213,10 @@ def _scan_heic(filepath: str) -> dict:
         "camera_make": None,
         "camera_model": None,
         "geosnag_processed": False,
+        "scan_error": None,
     }
 
     try:
-        from PIL import Image
-        from PIL.ExifTags import Base as ExifBase
-
-        # Use PIL with pillow-heif registered
-        from pillow_heif import register_heif_opener
-
-        register_heif_opener()
-
         with Image.open(filepath) as img:
             exif = img.getexif()
 
@@ -272,8 +274,8 @@ def _scan_heic(filepath: str) -> dict:
                         if alt_ref == 1:
                             alt = -alt
                         result["gps_altitude"] = alt
-                    except (TypeError, ValueError):
-                        pass
+                    except (TypeError, ValueError) as e:
+                        logger.debug(f"HEIC altitude conversion error for {filepath}: {e}")
 
             # Software tag (IFD0, 0x0131) for GeoSnag processed marker
             software = exif.get(0x0131, "")  # 0x0131 = Software
@@ -322,6 +324,61 @@ def scan_photo(filepath: str) -> PhotoMeta:
     return meta
 
 
+def collect_photo_paths(
+    directories: list,
+    extensions: set = None,
+    recursive: bool = True,
+    exclude_patterns: list = None,
+) -> list[str]:
+    """Walk directories and collect all matching photo file paths.
+
+    This is the single implementation of directory traversal used by both
+    scan_directory() and the parallel scanner.
+
+    Args:
+        directories: List of directory paths to scan
+        extensions: File extensions to include (default: PHOTO_EXTS)
+        recursive: Scan subdirectories
+        exclude_patterns: Glob patterns for files to skip
+
+    Returns:
+        List of file paths (sorted within each directory)
+    """
+    if extensions is None:
+        extensions = PHOTO_EXTS
+
+    paths = []
+    for directory in directories:
+        if not os.path.isdir(directory):
+            logger.warning(f"Directory not found, skipping: {directory}")
+            continue
+
+        walker = os.walk(directory) if recursive else [(directory, [], os.listdir(directory))]
+        for root, dirs, files in walker:
+            if not recursive:
+                files = [f for f in files if os.path.isfile(os.path.join(root, f))]
+            for fname in sorted(files):
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in extensions:
+                    continue
+
+                filepath = os.path.join(root, fname)
+
+                if exclude_patterns:
+                    rel_path = os.path.relpath(filepath, directory)
+                    excluded = False
+                    for pattern in exclude_patterns:
+                        if fnmatch.fnmatch(rel_path, pattern) or fnmatch.fnmatch(filepath, pattern):
+                            excluded = True
+                            break
+                    if excluded:
+                        continue
+
+                paths.append(filepath)
+
+    return paths
+
+
 def scan_directory(
     directory: str,
     extensions: set = None,
@@ -340,45 +397,19 @@ def scan_directory(
     Returns:
         List of PhotoMeta for all found photos
     """
-    if extensions is None:
-        extensions = PHOTO_EXTS
-
-    import fnmatch
+    paths = collect_photo_paths([directory], extensions, recursive, exclude_patterns)
 
     results = []
-    scan_count = 0
     error_count = 0
 
-    for root, dirs, files in os.walk(directory) if recursive else [(directory, [], os.listdir(directory))]:
-        if not recursive:
-            files = [f for f in files if os.path.isfile(os.path.join(root, f))]
-        for fname in sorted(files):
-            ext = os.path.splitext(fname)[1].lower()
-            if ext not in extensions:
-                continue
+    for i, filepath in enumerate(paths, 1):
+        if i % 100 == 0:
+            logger.info(f"  Scanned {i} files...")
 
-            filepath = os.path.join(root, fname)
+        meta = scan_photo(filepath)
+        if meta.scan_error:
+            error_count += 1
+        results.append(meta)
 
-            # Check exclusion patterns
-            if exclude_patterns:
-                rel_path = os.path.relpath(filepath, directory)
-                excluded = False
-                for pattern in exclude_patterns:
-                    if fnmatch.fnmatch(rel_path, pattern) or fnmatch.fnmatch(filepath, pattern):
-                        excluded = True
-                        break
-                if excluded:
-                    continue
-
-            scan_count += 1
-
-            if scan_count % 100 == 0:
-                logger.info(f"  Scanned {scan_count} files...")
-
-            meta = scan_photo(filepath)
-            if meta.scan_error:
-                error_count += 1
-            results.append(meta)
-
-    logger.info(f"Scanned {scan_count} files in {directory} ({error_count} errors)")
+    logger.info(f"Scanned {len(paths)} files in {directory} ({error_count} errors)")
     return results

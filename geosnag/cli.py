@@ -88,6 +88,11 @@ def load_config(config_path: str) -> dict:
     matching.setdefault("max_time_delta_minutes", 120)
     matching.setdefault("min_confidence", 0)
 
+    if matching["max_time_delta_minutes"] < 0:
+        raise ValueError(f"max_time_delta_minutes must be >= 0, got {matching['max_time_delta_minutes']}")
+    if not (0 <= matching["min_confidence"] <= 100):
+        raise ValueError(f"min_confidence must be 0–100, got {matching['min_confidence']}")
+
     # Unified scan_dirs — also support legacy camera_dirs/mobile_dirs
     scan_dirs = config.get("scan_dirs", [])
     if not scan_dirs:
