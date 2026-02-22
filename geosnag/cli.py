@@ -20,6 +20,7 @@ import argparse
 import csv
 import hashlib
 import logging
+import multiprocessing
 import os
 import sys
 import time
@@ -82,7 +83,11 @@ def load_config(config_path: str) -> dict:
     config.setdefault("log_file", None)
     config.setdefault("exclude_patterns", [])
     config.setdefault("use_index", True)
-    config.setdefault("workers", 4)
+    try:
+        default_workers = max(1, int(multiprocessing.cpu_count() * 0.75))
+    except (NotImplementedError, TypeError):
+        default_workers = 2
+    config.setdefault("workers", default_workers)
 
     matching = config.setdefault("matching", {})
     matching.setdefault("max_time_delta_minutes", 120)
@@ -417,7 +422,7 @@ Examples:
         "--workers",
         type=int,
         default=None,
-        help="Number of parallel scan threads (default: 4, from config)",
+        help="Number of parallel scan threads (default: 75%% of CPU cores)",
     )
     parser.add_argument(
         "--reindex",
@@ -522,7 +527,7 @@ Examples:
         index.validate_match_threshold(config["matching"]["max_time_delta_minutes"])
 
     # Scan with threading + index
-    workers = max(1, config.get("workers", 4))
+    workers = max(1, config.get("workers", 2))
     all_photos = scan_with_index(
         directories=scan_dirs,
         extensions=config["extensions"],

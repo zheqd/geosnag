@@ -16,10 +16,11 @@ Algorithm:
 
 from __future__ import annotations
 
+import bisect
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 
 from . import PROJECT_NAME
@@ -161,9 +162,11 @@ def match_photos(
 
     stats.source_dates = len(source_by_date)
 
-    # Sort source photos within each date by timestamp
+    # Sort source photos within each date by timestamp and build lookup keys
+    source_timestamps: dict[str, list[datetime]] = {}
     for date_key in source_by_date:
         source_by_date[date_key].sort(key=lambda p: p.datetime_original)
+        source_timestamps[date_key] = [p.datetime_original for p in source_by_date[date_key]]
 
     logger.info(f"GPS source index: {stats.sources} photos across {stats.source_dates} dates")
 
@@ -187,16 +190,23 @@ def match_photos(
             unmatched.append(tp)
             continue
 
-        # Find closest source photo by timestamp
+        # Find closest source photo by timestamp (binary search)
         best_match: Optional[PhotoMeta] = None
         best_delta: Optional[timedelta] = None
 
-        for sp in source_by_date[date_key]:
-            delta = abs(tp.datetime_original - sp.datetime_original)
-            if delta <= max_time_delta:
-                if best_delta is None or delta < best_delta:
-                    best_match = sp
-                    best_delta = delta
+        sources_for_date = source_by_date[date_key]
+        timestamps = source_timestamps[date_key]
+        idx = bisect.bisect_left(timestamps, tp.datetime_original)
+
+        # Check the two nearest candidates: idx-1 (left) and idx (right)
+        for candidate_idx in (idx - 1, idx):
+            if 0 <= candidate_idx < len(sources_for_date):
+                sp = sources_for_date[candidate_idx]
+                delta = abs(tp.datetime_original - sp.datetime_original)
+                if delta <= max_time_delta:
+                    if best_delta is None or delta < best_delta:
+                        best_match = sp
+                        best_delta = delta
 
         if best_match and best_delta is not None:
             max_seconds = max_time_delta.total_seconds()
