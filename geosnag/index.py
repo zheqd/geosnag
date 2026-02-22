@@ -34,6 +34,9 @@ Index structure:
 Changes in v5: scan_error not stored — files with errors are not cached
 at all, so they get a fresh scan attempt on the next run.
 Match cache uses generation counter for O(1) invalidation.
+
+Changes in v6: added format_mismatch field. Version bump forces full
+rescan so existing entries get mismatch detection.
 """
 
 from __future__ import annotations
@@ -49,7 +52,7 @@ from .scanner import PhotoMeta
 
 logger = logging.getLogger(f"{PROJECT_NAME.lower()}.index")
 
-INDEX_VERSION = 5
+INDEX_VERSION = 6
 
 
 def _default_index_path(config_path: str) -> str:
@@ -76,6 +79,7 @@ def _photo_to_entry(meta: PhotoMeta) -> dict:
         "camera_make": meta.camera_make,
         "camera_model": meta.camera_model,
         "geosnag_processed": meta.geosnag_processed,
+        "format_mismatch": meta.format_mismatch,
     }
 
 
@@ -101,6 +105,7 @@ def _entry_to_photo(filepath: str, entry: dict) -> PhotoMeta:
         camera_make=entry.get("camera_make"),
         camera_model=entry.get("camera_model"),
         geosnag_processed=entry.get("geosnag_processed", False),
+        format_mismatch=entry.get("format_mismatch"),
         # scan_error not stored in index — transient, re-evaluated on rescan
     )
 
