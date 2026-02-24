@@ -16,6 +16,7 @@ from __future__ import annotations
 import fnmatch
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
@@ -31,21 +32,25 @@ logger = logging.getLogger(f"{PROJECT_NAME.lower()}.scanner")
 _Image = None
 _ExifBase = None
 _heif_registered = False
+_heif_lock = threading.Lock()
 
 
 def _ensure_heif():
-    """Lazy-import PIL + pillow-heif on first use."""
+    """Lazy-import PIL + pillow-heif on first use (thread-safe)."""
     global _Image, _ExifBase, _heif_registered
     if _heif_registered:
-        return
-    from PIL import Image as _PILImage
-    from PIL.ExifTags import Base as _PILExifBase
-    from pillow_heif import register_heif_opener
+        return  # fast path: no lock needed
+    with _heif_lock:
+        if _heif_registered:
+            return  # another thread completed setup
+        from PIL import Image as _PILImage
+        from PIL.ExifTags import Base as _PILExifBase
+        from pillow_heif import register_heif_opener
 
-    register_heif_opener()
-    _Image = _PILImage
-    _ExifBase = _PILExifBase
-    _heif_registered = True
+        register_heif_opener()
+        _Image = _PILImage
+        _ExifBase = _PILExifBase
+        _heif_registered = True
 
 
 # Directories always excluded from recursive walks (Synology system dirs, etc.)
@@ -70,6 +75,16 @@ PHOTO_EXTS = {
 
 GEOSNAG_TAG = PROJECT_TAG
 GEOSNAG_MARKER_PREFIX = MARKER_PREFIX
+
+# Extension → format name mapping for magic-byte mismatch detection.
+# Also used by writer.py (inverted) to derive the canonical extension for a format.
+_EXT_FORMAT = {
+    ".jpg": "JPEG",
+    ".jpeg": "JPEG",
+    ".png": "PNG",
+    ".heic": "HEIC",
+    ".heif": "HEIC",
+}
 
 
 @dataclass
@@ -316,13 +331,6 @@ def _detect_format_mismatch(filepath: str, ext: str) -> Optional[str]:
     Returns the real format string (e.g. "JPEG") if mismatched, None if OK.
     Common with Google Takeout exports that save JPEGs as .heic.
     """
-    _EXT_FORMAT = {
-        ".jpg": "JPEG",
-        ".jpeg": "JPEG",
-        ".png": "PNG",
-        ".heic": "HEIC",
-        ".heif": "HEIC",
-    }
     expected = _EXT_FORMAT.get(ext)
     if expected is None:
         return None  # RAW formats — no magic-byte check
