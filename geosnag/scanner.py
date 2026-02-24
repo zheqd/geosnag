@@ -317,9 +317,11 @@ def _detect_format_mismatch(filepath: str, ext: str) -> Optional[str]:
     Common with Google Takeout exports that save JPEGs as .heic.
     """
     _EXT_FORMAT = {
-        ".jpg": "JPEG", ".jpeg": "JPEG",
+        ".jpg": "JPEG",
+        ".jpeg": "JPEG",
         ".png": "PNG",
-        ".heic": "HEIC", ".heif": "HEIC",
+        ".heic": "HEIC",
+        ".heif": "HEIC",
     }
     expected = _EXT_FORMAT.get(ext)
     if expected is None:

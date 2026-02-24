@@ -177,8 +177,13 @@ class TestExiftoolLenientFlag:
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stderr="")
             _write_gps_exiftool(
-                "/tmp/test.heic", 1.0, 1.0, None, None,
-                ["exiftool"], lenient=lenient,
+                "/tmp/test.heic",
+                1.0,
+                1.0,
+                None,
+                None,
+                ["exiftool"],
+                lenient=lenient,
             )
             return mock_run.call_args[0][0]
 
@@ -226,9 +231,7 @@ class TestWriteGpsPyexiv2ImageData:
         mock_pyexiv2, mock_imagedata = _make_mock_pyexiv2(b"modified_jpeg_content")
 
         with patch.dict("sys.modules", {"pyexiv2": mock_pyexiv2}):
-            _write_gps_pyexiv2_imagedata(
-                str(test_file), 55.7539, 37.6208, 150.0, "GeoSnag:test"
-            )
+            _write_gps_pyexiv2_imagedata(str(test_file), 55.7539, 37.6208, 150.0, "GeoSnag:test")
 
         # File should contain the modified content
         assert test_file.read_bytes() == b"modified_jpeg_content"
@@ -245,9 +248,7 @@ class TestWriteGpsPyexiv2ImageData:
         with patch.dict("sys.modules", {"pyexiv2": mock_pyexiv2}):
             with patch("os.replace", side_effect=OSError("disk full")):
                 with pytest.raises(OSError, match="disk full"):
-                    _write_gps_pyexiv2_imagedata(
-                        str(test_file), 1.0, 1.0, None, None
-                    )
+                    _write_gps_pyexiv2_imagedata(str(test_file), 1.0, 1.0, None, None)
 
         # Original content should be untouched
         assert test_file.read_bytes() == b"original_content"
@@ -262,9 +263,7 @@ class TestWriteGpsPyexiv2ImageData:
         mock_pyexiv2, mock_imagedata = _make_mock_pyexiv2()
 
         with patch.dict("sys.modules", {"pyexiv2": mock_pyexiv2}):
-            _write_gps_pyexiv2_imagedata(
-                str(test_file), 1.0, 1.0, 100.0, None
-            )
+            _write_gps_pyexiv2_imagedata(str(test_file), 1.0, 1.0, 100.0, None)
 
         # Check modify_exif was called with altitude data
         modify_call = mock_imagedata.modify_exif.call_args[0][0]
@@ -279,9 +278,7 @@ class TestWriteGpsPyexiv2ImageData:
         mock_pyexiv2, mock_imagedata = _make_mock_pyexiv2()
 
         with patch.dict("sys.modules", {"pyexiv2": mock_pyexiv2}):
-            _write_gps_pyexiv2_imagedata(
-                str(test_file), 1.0, 1.0, -50.0, None
-            )
+            _write_gps_pyexiv2_imagedata(str(test_file), 1.0, 1.0, -50.0, None)
 
         modify_call = mock_imagedata.modify_exif.call_args[0][0]
         assert modify_call["Exif.GPSInfo.GPSAltitudeRef"] == "1"
@@ -294,9 +291,7 @@ class TestWriteGpsPyexiv2ImageData:
         mock_pyexiv2, mock_imagedata = _make_mock_pyexiv2()
 
         with patch.dict("sys.modules", {"pyexiv2": mock_pyexiv2}):
-            _write_gps_pyexiv2_imagedata(
-                str(test_file), 1.0, 1.0, None, None
-            )
+            _write_gps_pyexiv2_imagedata(str(test_file), 1.0, 1.0, None, None)
 
         modify_call = mock_imagedata.modify_exif.call_args[0][0]
         assert "Exif.GPSInfo.GPSAltitude" not in modify_call
@@ -309,12 +304,11 @@ class TestWriteGpsPyexiv2ImageData:
         mock_pyexiv2, mock_imagedata = _make_mock_pyexiv2()
 
         with patch.dict("sys.modules", {"pyexiv2": mock_pyexiv2}):
-            _write_gps_pyexiv2_imagedata(
-                str(test_file), 1.0, 1.0, None, "GeoSnag:v0.3.1:2026-01-01"
-            )
+            _write_gps_pyexiv2_imagedata(str(test_file), 1.0, 1.0, None, "GeoSnag:v0.3.1:2026-01-01")
 
         modify_call = mock_imagedata.modify_exif.call_args[0][0]
         from geosnag.writer import GEOSNAG_TAG
+
         assert modify_call[GEOSNAG_TAG] == "GeoSnag:v0.3.1:2026-01-01"
 
 
@@ -429,7 +423,9 @@ class TestWriteGpsFormatMismatchRouting:
             with patch.object(writer_module, "_EXIFTOOL", ["exiftool"]):
                 with patch("geosnag.writer._write_gps_pyexiv2_imagedata") as mock_id:
                     result = write_gps_to_exif(
-                        "/tmp/test.heic", 1.0, 1.0,
+                        "/tmp/test.heic",
+                        1.0,
+                        1.0,
                         format_mismatch="JPEG",
                     )
                     mock_id.assert_called_once()
@@ -442,7 +438,9 @@ class TestWriteGpsFormatMismatchRouting:
                 with patch("geosnag.writer._write_gps_pyexiv2_imagedata"):
                     with patch("geosnag.writer._write_gps_pyexiv2") as mock_normal:
                         write_gps_to_exif(
-                            "/tmp/test.heic", 1.0, 1.0,
+                            "/tmp/test.heic",
+                            1.0,
+                            1.0,
                             format_mismatch="JPEG",
                         )
                         mock_normal.assert_not_called()
@@ -457,7 +455,9 @@ class TestWriteGpsFormatMismatchRouting:
                 ):
                     with patch("geosnag.writer._write_gps_exiftool_rename") as mock_rename:
                         result = write_gps_to_exif(
-                            "/tmp/test.heic", 1.0, 1.0,
+                            "/tmp/test.heic",
+                            1.0,
+                            1.0,
                             format_mismatch="JPEG",
                         )
                         mock_rename.assert_called_once()
@@ -472,7 +472,9 @@ class TestWriteGpsFormatMismatchRouting:
             with patch.object(writer_module, "_EXIFTOOL", ["exiftool"]):
                 with patch("geosnag.writer._write_gps_exiftool_rename") as mock_rename:
                     result = write_gps_to_exif(
-                        "/tmp/test.heic", 1.0, 1.0,
+                        "/tmp/test.heic",
+                        1.0,
+                        1.0,
                         format_mismatch="JPEG",
                     )
                     mock_rename.assert_called_once()
@@ -483,7 +485,9 @@ class TestWriteGpsFormatMismatchRouting:
         with patch.object(writer_module, "_PYEXIV2_OK", False):
             with patch.object(writer_module, "_EXIFTOOL", None):
                 result = write_gps_to_exif(
-                    "/tmp/test.heic", 1.0, 1.0,
+                    "/tmp/test.heic",
+                    1.0,
+                    1.0,
                     format_mismatch="JPEG",
                 )
                 assert not result.success
@@ -502,7 +506,9 @@ class TestWriteGpsFormatMismatchRouting:
                         side_effect=RuntimeError("ExifTool rename also exploded"),
                     ):
                         result = write_gps_to_exif(
-                            "/tmp/test.heic", 1.0, 1.0,
+                            "/tmp/test.heic",
+                            1.0,
+                            1.0,
                             format_mismatch="JPEG",
                         )
                         assert not result.success
@@ -521,7 +527,9 @@ class TestWriteGpsFormatMismatchRouting:
     def test_mismatch_invalid_coords_still_rejected(self):
         """Coordinate validation happens before mismatch routing."""
         result = write_gps_to_exif(
-            "/tmp/test.heic", 999.0, 1.0,
+            "/tmp/test.heic",
+            999.0,
+            1.0,
             format_mismatch="JPEG",
         )
         assert not result.success
@@ -532,7 +540,9 @@ class TestWriteGpsFormatMismatchRouting:
         with patch.object(writer_module, "_PYEXIV2_OK", False):
             with patch.object(writer_module, "_EXIFTOOL", None):
                 result = write_gps_to_exif(
-                    "/tmp/test.heic", 1.0, 1.0,
+                    "/tmp/test.heic",
+                    1.0,
+                    1.0,
                     format_mismatch="JPEG",
                 )
                 assert not result.success
