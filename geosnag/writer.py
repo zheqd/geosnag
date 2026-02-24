@@ -27,7 +27,7 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from . import MARKER_PREFIX, PROJECT_NAME, PROJECT_TAG, __version__
@@ -108,8 +108,6 @@ class WriteResult:
     error: Optional[str] = None
 
 
-
-
 def _decimal_to_dms_rational(decimal: float) -> str:
     """Convert decimal degrees to EXIF DMS rational string (for pyexiv2)."""
     d = int(abs(decimal))
@@ -121,7 +119,7 @@ def _decimal_to_dms_rational(decimal: float) -> str:
 
 def _make_stamp() -> str:
     """Generate the processed marker string."""
-    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return f"{MARKER_PREFIX}v{__version__}:{now}"
 
 
@@ -466,8 +464,7 @@ def write_gps_to_exif(
 
         # Neither backend can handle it
         logger.warning(
-            f"Format mismatch: {basename} is actually {format_mismatch}, "
-            f"but neither pyexiv2 nor ExifTool is available"
+            f"Format mismatch: {basename} is actually {format_mismatch}, but neither pyexiv2 nor ExifTool is available"
         )
         return WriteResult(
             filepath=filepath,
