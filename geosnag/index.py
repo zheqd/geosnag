@@ -44,6 +44,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from datetime import datetime
 from typing import Optional
 
@@ -177,6 +178,11 @@ class ScanIndex:
             logger.debug("Index unchanged, skipping save")
             return
 
+        # Guard against symlinks — refuse to write through a symlinked index path
+        if os.path.islink(self.index_path):
+            logger.error(f"Refusing to save index through symlink: {self.index_path}")
+            return
+
         data = {
             "version": INDEX_VERSION,
             "match_threshold_minutes": self._match_threshold_minutes,
@@ -184,10 +190,11 @@ class ScanIndex:
             "entries": self.entries,
         }
 
-        # Write to temp file first, then rename (atomic on POSIX)
-        tmp_path = self.index_path + ".tmp"
+        # Atomic write: mkstemp for unpredictable temp name, then rename
+        dir_name = os.path.dirname(self.index_path) or "."
+        fd, tmp_path = tempfile.mkstemp(suffix=".tmp", prefix=".geosnag_idx_", dir=dir_name)
         try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, separators=(",", ":"))
 
             os.replace(tmp_path, self.index_path)
@@ -196,11 +203,10 @@ class ScanIndex:
 
         except OSError as e:
             logger.error(f"Failed to save index: {e}")
-            if os.path.exists(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except OSError as cleanup_err:
-                    logger.warning(f"Could not clean up temp index file {tmp_path}: {cleanup_err}")
+            try:
+                os.unlink(tmp_path)
+            except OSError as cleanup_err:
+                logger.warning(f"Could not clean up temp index file {tmp_path}: {cleanup_err}")
 
     def lookup(self, filepath: str) -> Optional[PhotoMeta]:
         """

@@ -7,6 +7,33 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.3.1] — 2026-02-24
+
+### Added
+
+- `tqdm` added to core dependencies
+- **tqdm progress bars** for scan and match operations, with suppressed
+  exifread warnings for cleaner output.
+- **Format mismatch detection** at scan time — Google Takeout files saved with
+  wrong extensions (e.g. JPEG data in `.heic`) are now detected early and routed
+  to a compatible write backend.
+- **pyexiv2 `ImageData` writer** — new byte-level write path that handles
+  format-mismatched files without requiring ExifTool.
+
+### Changed
+
+- **Index schema v6** — added `format_mismatch` field to cached entries.
+  Version bump forces full rescan so existing entries get mismatch detection.
+
+### Fixed
+
+- Google Takeout format-mismatched files no longer fail silently during GPS
+  write.
+- `datetime.utcnow()` deprecation warning replaced with timezone-aware
+  `datetime.now(timezone.utc)`.
+
+---
+
 ## [0.3.0] — 2026-02-22
 
 ### Changed

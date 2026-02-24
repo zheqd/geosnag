@@ -4,9 +4,9 @@ Tests for format mismatch detection and handling.
 Covers:
 - scanner._detect_format_mismatch: magic byte detection for all formats
 - scanner.scan_photo: format_mismatch field populated
-- writer._write_gps_exiftool: lenient (-m) flag
-- writer._write_gps_pyexiv2_imagedata: atomic write, temp cleanup
-- writer.write_gps_to_exif: format_mismatch routing (3 strategies + fallbacks)
+- writer._write_gps_pyexiv2_imagedata: atomic write, temp cleanup, symlink guard
+- writer._write_gps_exiftool_rename: temp-rename strategy, symlink guard, mkstemp
+- writer.write_gps_to_exif: format_mismatch routing (strategies + fallbacks)
 - index: format_mismatch serialization round-trip
 """
 
@@ -22,7 +22,6 @@ from geosnag import writer as writer_module
 from geosnag.index import ScanIndex, _entry_to_photo, _photo_to_entry
 from geosnag.scanner import PhotoMeta, _detect_format_mismatch
 from geosnag.writer import (
-    _write_gps_exiftool,
     _write_gps_exiftool_rename,
     _write_gps_pyexiv2_imagedata,
     write_gps_to_exif,
@@ -166,44 +165,6 @@ class TestScanPhotoFormatMismatch:
 
 
 # ---------------------------------------------------------------------------
-# _write_gps_exiftool lenient flag
-# ---------------------------------------------------------------------------
-
-
-class TestExiftoolLenientFlag:
-    """Test that -m flag is passed when lenient=True."""
-
-    def _run(self, lenient=False):
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stderr="")
-            _write_gps_exiftool(
-                "/tmp/test.heic",
-                1.0,
-                1.0,
-                None,
-                None,
-                ["exiftool"],
-                lenient=lenient,
-            )
-            return mock_run.call_args[0][0]
-
-    def test_lenient_includes_m_flag(self):
-        args = self._run(lenient=True)
-        assert "-m" in args
-
-    def test_normal_excludes_m_flag(self):
-        args = self._run(lenient=False)
-        assert "-m" not in args
-
-    def test_m_flag_before_gps_args(self):
-        """The -m flag should appear before any GPS arguments."""
-        args = self._run(lenient=True)
-        m_idx = args.index("-m")
-        gps_idx = next(i for i, a in enumerate(args) if "GPSLatitude=" in a)
-        assert m_idx < gps_idx
-
-
-# ---------------------------------------------------------------------------
 # _write_gps_pyexiv2_imagedata
 # ---------------------------------------------------------------------------
 
@@ -223,7 +184,7 @@ class TestWriteGpsPyexiv2ImageData:
     """Test the ImageData-based writer with atomic temp-file strategy."""
 
     def test_reads_file_and_writes_atomically(self, tmp_path):
-        """Verify: read raw → ImageData modify → temp file → os.replace."""
+        """Verify: read raw → ImageData modify → mkstemp temp → os.replace."""
         test_file = tmp_path / "photo.heic"
         test_file.write_bytes(b"fake_jpeg_content")
         os.chmod(str(test_file), 0o644)
@@ -235,8 +196,9 @@ class TestWriteGpsPyexiv2ImageData:
 
         # File should contain the modified content
         assert test_file.read_bytes() == b"modified_jpeg_content"
-        # No temp file left behind
-        assert not (tmp_path / "photo.heic.geosnag_tmp").exists()
+        # No temp files left behind (mkstemp uses random names)
+        tmp_files = [f for f in tmp_path.iterdir() if f.name != "photo.heic"]
+        assert len(tmp_files) == 0
 
     def test_temp_file_cleaned_on_failure(self, tmp_path):
         """If os.replace fails, temp file should be removed."""
@@ -252,8 +214,22 @@ class TestWriteGpsPyexiv2ImageData:
 
         # Original content should be untouched
         assert test_file.read_bytes() == b"original_content"
-        # Temp file should be cleaned up
-        assert not (tmp_path / "photo.heic.geosnag_tmp").exists()
+        # Temp file should be cleaned up (mkstemp uses random names)
+        tmp_files = [f for f in tmp_path.iterdir() if f.name != "photo.heic"]
+        assert len(tmp_files) == 0
+
+    def test_rejects_symlink(self, tmp_path):
+        """ImageData writer should refuse to operate on symlinked files."""
+        real_file = tmp_path / "real_photo.heic"
+        real_file.write_bytes(b"fake_content")
+        symlink = tmp_path / "link_photo.heic"
+        symlink.symlink_to(real_file)
+
+        mock_pyexiv2, _ = _make_mock_pyexiv2(b"modified")
+
+        with patch.dict("sys.modules", {"pyexiv2": mock_pyexiv2}):
+            with pytest.raises(RuntimeError, match="symlink"):
+                _write_gps_pyexiv2_imagedata(str(symlink), 1.0, 1.0, None, None)
 
     def test_passes_altitude_when_provided(self, tmp_path):
         """Verify altitude is included in GPS data."""
@@ -321,7 +297,7 @@ class TestWriteGpsExiftoolRename:
     """Test the ExifTool temp-rename strategy for format-mismatched files."""
 
     def test_creates_temp_with_correct_extension(self, tmp_path):
-        """A JPEG-in-.heic should be copied to a .jpg temp file."""
+        """A JPEG-in-.heic should be copied to a .jpg temp file (via mkstemp)."""
         test_file = tmp_path / "photo.heic"
         test_file.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
 
@@ -333,13 +309,13 @@ class TestWriteGpsExiftoolRename:
             return MagicMock(returncode=0, stderr="")
 
         with patch("subprocess.run", side_effect=mock_run):
-            _write_gps_exiftool_rename(
-                str(test_file), 1.0, 1.0, None, None, ["exiftool"], "JPEG"
-            )
+            _write_gps_exiftool_rename(str(test_file), 1.0, 1.0, None, None, ["exiftool"], "JPEG")
 
         # ExifTool should have been called with a .jpg temp file
         assert len(created_files) == 1
         assert created_files[0].endswith(".jpg")
+        # mkstemp creates unpredictable names with the prefix
+        assert ".geosnag_" in os.path.basename(created_files[0])
 
     def test_original_file_replaced_with_modified(self, tmp_path):
         """After ExifTool writes to temp, original should be atomically replaced."""
@@ -354,9 +330,7 @@ class TestWriteGpsExiftoolRename:
             return MagicMock(returncode=0, stderr="")
 
         with patch("subprocess.run", side_effect=mock_run):
-            _write_gps_exiftool_rename(
-                str(test_file), 1.0, 1.0, None, None, ["exiftool"], "JPEG"
-            )
+            _write_gps_exiftool_rename(str(test_file), 1.0, 1.0, None, None, ["exiftool"], "JPEG")
 
         # Original path should now contain the modified content
         assert test_file.read_bytes() == b"exiftool_modified_content"
@@ -369,14 +343,12 @@ class TestWriteGpsExiftoolRename:
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1, stderr="ExifTool error")
             with pytest.raises(RuntimeError):
-                _write_gps_exiftool_rename(
-                    str(test_file), 1.0, 1.0, None, None, ["exiftool"], "JPEG"
-                )
+                _write_gps_exiftool_rename(str(test_file), 1.0, 1.0, None, None, ["exiftool"], "JPEG")
 
         # Original should be untouched
         assert test_file.read_bytes() == b"original_content"
-        # No temp files left behind
-        tmp_files = list(tmp_path.glob(".geosnag_tmp_*"))
+        # No temp files left behind (mkstemp uses .geosnag_ prefix)
+        tmp_files = [f for f in tmp_path.iterdir() if f.name != "photo.heic"]
         assert len(tmp_files) == 0
 
     def test_unknown_format_raises(self, tmp_path):
@@ -385,9 +357,7 @@ class TestWriteGpsExiftoolRename:
         test_file.write_bytes(b"\x00" * 50)
 
         with pytest.raises(RuntimeError, match="Unknown format"):
-            _write_gps_exiftool_rename(
-                str(test_file), 1.0, 1.0, None, None, ["exiftool"], "TIFF"
-            )
+            _write_gps_exiftool_rename(str(test_file), 1.0, 1.0, None, None, ["exiftool"], "TIFF")
 
     def test_preserves_file_permissions(self, tmp_path):
         """Temp-replaced file should keep original permissions."""
@@ -402,11 +372,40 @@ class TestWriteGpsExiftoolRename:
             return MagicMock(returncode=0, stderr="")
 
         with patch("subprocess.run", side_effect=mock_run):
-            _write_gps_exiftool_rename(
-                str(test_file), 1.0, 1.0, None, None, ["exiftool"], "JPEG"
-            )
+            _write_gps_exiftool_rename(str(test_file), 1.0, 1.0, None, None, ["exiftool"], "JPEG")
 
         assert os.stat(str(test_file)).st_mode & 0o777 == 0o640
+
+    def test_rejects_symlink(self, tmp_path):
+        """Rename writer should refuse to operate on symlinked files."""
+        real_file = tmp_path / "real_photo.heic"
+        real_file.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+        symlink = tmp_path / "link_photo.heic"
+        symlink.symlink_to(real_file)
+
+        with pytest.raises(RuntimeError, match="symlink"):
+            _write_gps_exiftool_rename(str(symlink), 1.0, 1.0, None, None, ["exiftool"], "JPEG")
+
+    def test_temp_uses_mkstemp_unpredictable_name(self, tmp_path):
+        """Temp file should use mkstemp (not a predictable name)."""
+        test_file = tmp_path / "photo.heic"
+        test_file.write_bytes(b"content")
+
+        observed_paths = []
+
+        def mock_run(args, **kwargs):
+            observed_paths.append(args[-1])
+            return MagicMock(returncode=0, stderr="")
+
+        # Run twice — names should differ (mkstemp randomness)
+        with patch("subprocess.run", side_effect=mock_run):
+            _write_gps_exiftool_rename(str(test_file), 1.0, 1.0, None, None, ["exiftool"], "JPEG")
+        test_file.write_bytes(b"content")  # recreate after replace
+        with patch("subprocess.run", side_effect=mock_run):
+            _write_gps_exiftool_rename(str(test_file), 1.0, 1.0, None, None, ["exiftool"], "JPEG")
+
+        assert len(observed_paths) == 2
+        assert observed_paths[0] != observed_paths[1]
 
 
 # ---------------------------------------------------------------------------

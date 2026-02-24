@@ -26,11 +26,13 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional
 
 from . import MARKER_PREFIX, PROJECT_NAME, PROJECT_TAG, __version__
+from .scanner import _EXT_FORMAT
 
 logger = logging.getLogger(f"{PROJECT_NAME.lower()}.writer")
 
@@ -123,21 +125,13 @@ def _make_stamp() -> str:
     return f"{MARKER_PREFIX}v{__version__}:{now}"
 
 
-# ---------------------------------------------------------------------------
-# pyexiv2 backend
-# ---------------------------------------------------------------------------
-
-
-def _write_gps_pyexiv2(
-    filepath: str,
+def _build_gps_exif_dict(
     latitude: float,
     longitude: float,
     altitude: Optional[float],
     stamp: Optional[str],
-) -> None:
-    """Write GPS (and optional stamp) via pyexiv2. Raises on failure."""
-    import pyexiv2
-
+) -> dict:
+    """Build the GPS EXIF tag dict shared by all pyexiv2 write paths."""
     lat_ref = "N" if latitude >= 0 else "S"
     lon_ref = "E" if longitude >= 0 else "W"
 
@@ -157,6 +151,26 @@ def _write_gps_pyexiv2(
 
     if stamp:
         gps_data[GEOSNAG_TAG] = stamp
+
+    return gps_data
+
+
+# ---------------------------------------------------------------------------
+# pyexiv2 backend
+# ---------------------------------------------------------------------------
+
+
+def _write_gps_pyexiv2(
+    filepath: str,
+    latitude: float,
+    longitude: float,
+    altitude: Optional[float],
+    stamp: Optional[str],
+) -> None:
+    """Write GPS (and optional stamp) via pyexiv2. Raises on failure."""
+    import pyexiv2
+
+    gps_data = _build_gps_exif_dict(latitude, longitude, altitude, stamp)
 
     img = pyexiv2.Image(filepath)
     try:
@@ -184,25 +198,14 @@ def _write_gps_pyexiv2_imagedata(
     """
     import pyexiv2
 
-    lat_ref = "N" if latitude >= 0 else "S"
-    lon_ref = "E" if longitude >= 0 else "W"
+    gps_data = _build_gps_exif_dict(latitude, longitude, altitude, stamp)
 
-    gps_data = {
-        "Exif.GPSInfo.GPSVersionID": "2 3 0 0",
-        "Exif.GPSInfo.GPSLatitudeRef": lat_ref,
-        "Exif.GPSInfo.GPSLatitude": _decimal_to_dms_rational(latitude),
-        "Exif.GPSInfo.GPSLongitudeRef": lon_ref,
-        "Exif.GPSInfo.GPSLongitude": _decimal_to_dms_rational(longitude),
-        "Exif.GPSInfo.GPSMapDatum": "WGS-84",
-    }
+    # Guard against symlinks — refuse to operate on symlinked files
+    if os.path.islink(filepath):
+        raise RuntimeError(f"Refusing to ImageData-write through symlink: {filepath}")
 
-    if altitude is not None:
-        alt_ref = "0" if altitude >= 0 else "1"
-        gps_data["Exif.GPSInfo.GPSAltitudeRef"] = alt_ref
-        gps_data["Exif.GPSInfo.GPSAltitude"] = f"{int(abs(altitude) * 100)}/100"
-
-    if stamp:
-        gps_data[GEOSNAG_TAG] = stamp
+    # Capture original permissions *before* any file operations (minimise TOCTOU)
+    orig_mode = os.stat(filepath).st_mode
 
     # Read file into memory — ImageData detects format from content, not extension
     with open(filepath, "rb") as f:
@@ -212,21 +215,27 @@ def _write_gps_pyexiv2_imagedata(
         img.modify_exif(gps_data)
         modified = img.get_bytes()
 
-    # Atomic write: temp file + rename (same strategy as libexiv2 internals)
-    tmp_path = filepath + ".geosnag_tmp"
+    # Atomic write: mkstemp for unpredictable name, created with original permissions
+    dir_name = os.path.dirname(filepath)
+    fd, tmp_path = tempfile.mkstemp(suffix=".geosnag_tmp", dir=dir_name)
+    fd_closed = False
     try:
-        with open(tmp_path, "wb") as f:
-            f.write(modified)
-        # Preserve original file permissions
-        st = os.stat(filepath)
-        os.chmod(tmp_path, st.st_mode)
-        os.replace(tmp_path, filepath)  # atomic on POSIX
+        os.fchmod(fd, orig_mode)
+        os.write(fd, modified)
+        os.close(fd)
+        fd_closed = True
+        os.replace(tmp_path, filepath)  # atomic on POSIX (same dir)
     except BaseException:
         # Clean up temp file on any failure (including KeyboardInterrupt)
+        if not fd_closed:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         try:
             os.unlink(tmp_path)
-        except OSError:
-            pass
+        except OSError as cleanup_err:
+            logger.debug(f"Failed to clean up temp file {tmp_path}: {cleanup_err}")
         raise
 
 
@@ -253,14 +262,8 @@ def _write_gps_exiftool(
     altitude: Optional[float],
     stamp: Optional[str],
     exiftool: List[str],
-    lenient: bool = False,
 ) -> None:
-    """Write GPS (and optional stamp) via exiftool subprocess. Raises on failure.
-
-    Args:
-        lenient: If True, pass -m flag to ignore minor errors like
-                 extension/content format mismatches (Google Takeout files).
-    """
+    """Write GPS (and optional stamp) via exiftool subprocess. Raises on failure."""
     lat_ref = "N" if latitude >= 0 else "S"
     lon_ref = "E" if longitude >= 0 else "W"
 
@@ -268,8 +271,6 @@ def _write_gps_exiftool(
         *exiftool,
         "-overwrite_original",
     ]
-    if lenient:
-        args.append("-m")
     args += [
         f"-GPSLatitude={abs(latitude)}",
         f"-GPSLatitudeRef={lat_ref}",
@@ -295,8 +296,10 @@ def _write_gps_exiftool(
         raise RuntimeError(stderr or "exiftool returned non-zero exit code")
 
 
-# Map format names (from scanner._detect_format_mismatch) → canonical extensions
-_FORMAT_EXT = {"JPEG": ".jpg", "PNG": ".png", "HEIC": ".heic"}
+# Derive format → canonical extension from scanner's _EXT_FORMAT (single source of truth).
+# Sort by (length, name) descending so shorter / alphabetically-earlier exts win last
+# (e.g. ".jpg" over ".jpeg", ".heic" over ".heif").
+_FORMAT_EXT = {fmt: ext for ext, fmt in sorted(_EXT_FORMAT.items(), key=lambda x: (len(x[0]), x[0]), reverse=True)}
 
 
 def _write_gps_exiftool_rename(
@@ -321,22 +324,23 @@ def _write_gps_exiftool_rename(
     if not correct_ext:
         raise RuntimeError(f"Unknown format {real_format!r}, cannot determine extension")
 
-    dir_name = os.path.dirname(filepath)
-    base_name = os.path.basename(filepath)
-    tmp_path = os.path.join(dir_name, f".geosnag_tmp_{base_name}{correct_ext}")
+    # Guard against symlinks — refuse to operate on symlinked files
+    if os.path.islink(filepath):
+        raise RuntimeError(f"Refusing to rename-write through symlink: {filepath}")
 
+    dir_name = os.path.dirname(filepath)
+
+    fd, tmp_path = tempfile.mkstemp(suffix=correct_ext, prefix=".geosnag_", dir=dir_name)
     try:
-        shutil.copy2(filepath, tmp_path)
+        os.close(fd)  # close immediately; copy2 overwrites content and permissions
+        shutil.copy2(filepath, tmp_path, follow_symlinks=False)
         _write_gps_exiftool(tmp_path, latitude, longitude, altitude, stamp, exiftool)
-        # Preserve original file permissions
-        st = os.stat(filepath)
-        os.chmod(tmp_path, st.st_mode)
-        os.replace(tmp_path, filepath)  # atomic on POSIX
+        os.replace(tmp_path, filepath)  # atomic on POSIX (same dir)
     except BaseException:
         try:
             os.unlink(tmp_path)
-        except OSError:
-            pass
+        except OSError as cleanup_err:
+            logger.debug(f"Failed to clean up temp file {tmp_path}: {cleanup_err}")
         raise
 
 
@@ -453,9 +457,7 @@ def write_gps_to_exif(
                 f"using ExifTool with temp rename to {_FORMAT_EXT.get(format_mismatch, '?')}"
             )
             try:
-                _write_gps_exiftool_rename(
-                    filepath, latitude, longitude, altitude, stamp, _EXIFTOOL, format_mismatch
-                )
+                _write_gps_exiftool_rename(filepath, latitude, longitude, altitude, stamp, _EXIFTOOL, format_mismatch)
                 logger.debug(f"GPS written (rename): {filepath}")
                 return WriteResult(filepath=filepath, success=True, method="exif")
             except Exception as e:
